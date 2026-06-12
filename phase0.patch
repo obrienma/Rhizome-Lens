@@ -1,0 +1,748 @@
+From d2bf973d05a42ca8aedb07407bb3f26c9cd4061c Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 6 Jun 2026 05:23:38 +0000
+Subject: [PATCH] chore(infra): bootstrap Phase 0 OTel observability stack
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+docker-compose with otel-collector, tempo, loki, prometheus, grafana.
+Grafana auto-provisioned with all three datasources. Accepts OTLP on
+4317/4318. Local block storage only — no S3.
+
+https://claude.ai/code/session_01Aq8P5bgX8YDj9WcbvwSZZx
+---
+ OBSERVABILITY_MIGRATION_PLAN.md               |  72 ++++++++
+ README.md                                     |  82 +++++++++
+ docker-compose.yml                            |  96 ++++++++++
+ .../provisioning/dashboards/dashboards.yaml   |  11 ++
+ grafana/provisioning/dashboards/overview.json | 174 ++++++++++++++++++
+ .../provisioning/datasources/datasources.yaml |  35 ++++
+ loki-config.yaml                              |  47 +++++
+ otel-collector-config.yaml                    |  47 +++++
+ prometheus.yml                                |   7 +
+ tempo.yaml                                    |  27 +++
+ test/synthetic-trace.json                     |  44 +++++
+ 11 files changed, 642 insertions(+)
+ create mode 100644 OBSERVABILITY_MIGRATION_PLAN.md
+ create mode 100644 docker-compose.yml
+ create mode 100644 grafana/provisioning/dashboards/dashboards.yaml
+ create mode 100644 grafana/provisioning/dashboards/overview.json
+ create mode 100644 grafana/provisioning/datasources/datasources.yaml
+ create mode 100644 loki-config.yaml
+ create mode 100644 otel-collector-config.yaml
+ create mode 100644 prometheus.yml
+ create mode 100644 tempo.yaml
+ create mode 100644 test/synthetic-trace.json
+
+diff --git a/OBSERVABILITY_MIGRATION_PLAN.md b/OBSERVABILITY_MIGRATION_PLAN.md
+new file mode 100644
+index 0000000..c2c524f
+--- /dev/null
++++ b/OBSERVABILITY_MIGRATION_PLAN.md
+@@ -0,0 +1,72 @@
++# Observability Migration Plan
++
++Four-service migration to OpenTelemetry, using `rhizome-observability` as the shared backend.
++
++---
++
++## Services in scope
++
++| Service | Language | Priority |
++|---|---|---|
++| synapse-l4 | TBD | Phase 1 |
++| sentinel-l7 | TBD | Phase 2 |
++| EventHorizon | TBD | Phase 3 |
++| Ledger-L5 | TBD | Phase 4 |
++
++---
++
++## Phases
++
++### Phase 0 — Observability Infrastructure (this repo)
++
++Bootstrap the shared OTel backend:
++- OTel Collector (receives OTLP on 4317/4318, routes to Tempo/Loki/Prometheus)
++- Tempo (trace storage)
++- Loki (log storage)
++- Prometheus (metrics)
++- Grafana (unified UI, auto-provisioned datasources + starter dashboard)
++
++**Completion marker:** `.observability/phase-0-complete` committed after stack verified healthy.
++
++### Phase 1 — synapse-l4 instrumentation
++
++- Add OTel SDK dependency
++- Instrument HTTP handlers, DB calls, outbound requests
++- Configure OTLP exporter pointing at collector on 4317 or 4318
++- Validate traces visible in Grafana → Tempo
++- Validate logs visible in Grafana → Loki
++
++### Phase 2 — sentinel-l7 instrumentation
++
++Same pattern as Phase 1. Add trace propagation headers for cross-service correlation with synapse-l4.
++
++### Phase 3 — EventHorizon instrumentation
++
++Same pattern. Focus on event pipeline spans (producer/consumer span kinds).
++
++### Phase 4 — Ledger-L5 instrumentation
++
++Same pattern. Focus on DB transaction spans and financial operation duration metrics.
++
++---
++
++## Rollout strategy
++
++Each service is instrumented independently. No service requires another to be instrumented first, but cross-service trace correlation only becomes visible once both sides propagate W3C `traceparent` headers.
++
++Phases 1–4 can proceed in parallel if team capacity allows. Phase 0 is the only hard prerequisite.
++
++---
++
++## Rollback
++
++OTel instrumentation is additive — removing it reverts the service to its pre-instrumentation state. No data migrations are required. The observability stack itself (Phase 0) is purely local infrastructure; tearing it down has no impact on services.
++
++---
++
++## Collector endpoint reference
++
++| Protocol | Address | Use when |
++|---|---|---|
++| OTLP/gRPC | `localhost:4317` | Default for most OTel SDKs |
++| OTLP/HTTP | `localhost:4318` | HTTP-only environments, browser SDKs |
+diff --git a/README.md b/README.md
+index 8a42ac7..23647bf 100644
+--- a/README.md
++++ b/README.md
+@@ -1 +1,83 @@
+ # rhizome-observability
++
++Shared OTel backend for the four-service observability migration. Provides a single `docker compose up` that brings up the full collection, storage, and visualization stack.
++
++```
++Services (future phases)
++        │
++        ▼ OTLP/gRPC :4317  or  OTLP/HTTP :4318
++┌─────────────────────┐
++│   otel-collector    │   (exposes metrics → Prometheus :8889)
++└──────┬──────┬───────┘
++       │      │
++   traces   logs     metrics
++       │      │         │
++       ▼      ▼         ▼
++   Tempo    Loki   Prometheus
++   :3200   :3100     :9090
++       │      │         │
++       └──────┴────┬────┘
++                   ▼
++              Grafana :3000
++         (auto-provisioned datasources)
++```
++
++---
++
++## Quickstart
++
++```bash
++docker compose up -d
++```
++
++Wait ~30 seconds for all services to pass their healthchecks, then verify:
++
++```bash
++docker compose ps
++# All five services should show "healthy"
++```
++
++Open Grafana at [http://localhost:3000](http://localhost:3000) — no login required. Navigate to **Dashboards → OTel Overview** for the starter dashboard.
++
++---
++
++## Smoke test
++
++Send a synthetic trace to verify the full pipeline:
++
++```bash
++curl -X POST http://localhost:4318/v1/traces \
++  -H 'Content-Type: application/json' \
++  -d @test/synthetic-trace.json
++```
++
++Expected response: `HTTP 200` with `{}` body.
++
++Then in Grafana: **Explore → Tempo → Search** — filter by service name `smoke-test`. The trace should appear within a few seconds.
++
++---
++
++## Port reference
++
++| Service | Port | Purpose |
++|---|---|---|
++| OTel Collector | 4317 | OTLP/gRPC ingest |
++| OTel Collector | 4318 | OTLP/HTTP ingest |
++| OTel Collector | 8889 | Prometheus metrics scrape |
++| Tempo | 3200 | HTTP API (Grafana datasource) |
++| Loki | 3100 | HTTP API |
++| Prometheus | 9090 | UI + query API |
++| Grafana | 3000 | UI |
++
++---
++
++## Teardown
++
++```bash
++docker compose down          # stop containers, keep volumes
++docker compose down -v       # stop containers and delete all stored data
++```
++
++---
++
++See [OBSERVABILITY_MIGRATION_PLAN.md](./OBSERVABILITY_MIGRATION_PLAN.md) for the full four-service migration plan.
+diff --git a/docker-compose.yml b/docker-compose.yml
+new file mode 100644
+index 0000000..4dbff08
+--- /dev/null
++++ b/docker-compose.yml
+@@ -0,0 +1,96 @@
++networks:
++  observability:
++    driver: bridge
++
++volumes:
++  tempo-data:
++  loki-data:
++
++services:
++  otel-collector:
++    image: otel/opentelemetry-collector-contrib:0.105.0
++    volumes:
++      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
++    ports:
++      - "4317:4317"
++      - "4318:4318"
++      - "8889:8889"
++    networks:
++      - observability
++    healthcheck:
++      test: ["CMD-SHELL", "wget -q --spider http://localhost:13133/ || exit 1"]
++      interval: 10s
++      timeout: 5s
++      retries: 5
++      start_period: 10s
++
++  tempo:
++    image: grafana/tempo:2.6.1
++    command: ["-config.file=/etc/tempo.yaml"]
++    volumes:
++      - ./tempo.yaml:/etc/tempo.yaml
++      - tempo-data:/var/tempo
++    ports:
++      - "3200:3200"
++    networks:
++      - observability
++    healthcheck:
++      test: ["CMD-SHELL", "wget -q --spider http://localhost:3200/ready || exit 1"]
++      interval: 10s
++      timeout: 5s
++      retries: 5
++      start_period: 15s
++
++  loki:
++    image: grafana/loki:3.2.0
++    command: ["-config.file=/etc/loki/config.yaml"]
++    volumes:
++      - ./loki-config.yaml:/etc/loki/config.yaml
++      - loki-data:/loki
++    ports:
++      - "3100:3100"
++    networks:
++      - observability
++    healthcheck:
++      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
++      interval: 10s
++      timeout: 5s
++      retries: 5
++      start_period: 10s
++
++  prometheus:
++    image: prom/prometheus:v2.54.1
++    volumes:
++      - ./prometheus.yml:/etc/prometheus/prometheus.yml
++    ports:
++      - "9090:9090"
++    networks:
++      - observability
++    healthcheck:
++      test: ["CMD-SHELL", "wget -q --spider http://localhost:9090/-/healthy || exit 1"]
++      interval: 10s
++      timeout: 5s
++      retries: 5
++
++  grafana:
++    image: grafana/grafana:11.2.0
++    environment:
++      - GF_AUTH_ANONYMOUS_ENABLED=true
++      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
++      - GF_AUTH_DISABLE_LOGIN_FORM=true
++    volumes:
++      - ./grafana/provisioning:/etc/grafana/provisioning
++    ports:
++      - "3000:3000"
++    depends_on:
++      - prometheus
++      - tempo
++      - loki
++    networks:
++      - observability
++    healthcheck:
++      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/health || exit 1"]
++      interval: 10s
++      timeout: 5s
++      retries: 5
++      start_period: 15s
+diff --git a/grafana/provisioning/dashboards/dashboards.yaml b/grafana/provisioning/dashboards/dashboards.yaml
+new file mode 100644
+index 0000000..03847a8
+--- /dev/null
++++ b/grafana/provisioning/dashboards/dashboards.yaml
+@@ -0,0 +1,11 @@
++apiVersion: 1
++
++providers:
++  - name: default
++    orgId: 1
++    folder: ""
++    type: file
++    disableDeletion: false
++    updateIntervalSeconds: 30
++    options:
++      path: /etc/grafana/provisioning/dashboards
+diff --git a/grafana/provisioning/dashboards/overview.json b/grafana/provisioning/dashboards/overview.json
+new file mode 100644
+index 0000000..27cb6b2
+--- /dev/null
++++ b/grafana/provisioning/dashboards/overview.json
+@@ -0,0 +1,174 @@
++{
++  "annotations": {
++    "list": [
++      {
++        "builtIn": 1,
++        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
++        "enable": true,
++        "hide": true,
++        "iconColor": "rgba(0, 211, 255, 1)",
++        "name": "Annotations & Alerts",
++        "type": "dashboard"
++      }
++    ]
++  },
++  "editable": true,
++  "fiscalYearStartMonth": 0,
++  "graphTooltip": 0,
++  "id": null,
++  "links": [],
++  "panels": [
++    {
++      "datasource": { "type": "prometheus", "uid": "prometheus" },
++      "fieldConfig": {
++        "defaults": {
++          "color": { "mode": "palette-classic" },
++          "custom": {
++            "axisBorderShow": false,
++            "axisCenteredZero": false,
++            "axisColorMode": "text",
++            "axisLabel": "",
++            "axisPlacement": "auto",
++            "barAlignment": 0,
++            "drawStyle": "line",
++            "fillOpacity": 10,
++            "gradientMode": "none",
++            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
++            "insertNulls": false,
++            "lineInterpolation": "linear",
++            "lineWidth": 1,
++            "pointSize": 5,
++            "scaleDistribution": { "type": "linear" },
++            "showPoints": "never",
++            "spanNulls": true,
++            "stacking": { "group": "A", "mode": "none" },
++            "thresholdsStyle": { "mode": "off" }
++          },
++          "mappings": [],
++          "thresholds": {
++            "mode": "absolute",
++            "steps": [
++              { "color": "green", "value": null },
++              { "color": "red", "value": 80 }
++            ]
++          },
++          "unit": "reqps"
++        },
++        "overrides": []
++      },
++      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
++      "id": 1,
++      "options": {
++        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
++        "tooltip": { "mode": "single", "sort": "none" }
++      },
++      "targets": [
++        {
++          "datasource": { "type": "prometheus", "uid": "prometheus" },
++          "editorMode": "code",
++          "expr": "rate(otelcol_receiver_accepted_spans_total[1m])",
++          "instant": false,
++          "legendFormat": "{{transport}}",
++          "refId": "A"
++        }
++      ],
++      "title": "Accepted Spans / sec",
++      "type": "timeseries"
++    },
++    {
++      "datasource": { "type": "prometheus", "uid": "prometheus" },
++      "fieldConfig": {
++        "defaults": {
++          "color": { "mode": "palette-classic" },
++          "custom": {
++            "axisBorderShow": false,
++            "axisCenteredZero": false,
++            "axisColorMode": "text",
++            "axisLabel": "",
++            "axisPlacement": "auto",
++            "barAlignment": 0,
++            "drawStyle": "line",
++            "fillOpacity": 10,
++            "gradientMode": "none",
++            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
++            "insertNulls": false,
++            "lineInterpolation": "linear",
++            "lineWidth": 1,
++            "pointSize": 5,
++            "scaleDistribution": { "type": "linear" },
++            "showPoints": "never",
++            "spanNulls": true,
++            "stacking": { "group": "A", "mode": "none" },
++            "thresholdsStyle": { "mode": "off" }
++          },
++          "mappings": [],
++          "thresholds": {
++            "mode": "absolute",
++            "steps": [
++              { "color": "green", "value": null },
++              { "color": "red", "value": 80 }
++            ]
++          },
++          "unit": "short"
++        },
++        "overrides": []
++      },
++      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
++      "id": 2,
++      "options": {
++        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
++        "tooltip": { "mode": "single", "sort": "none" }
++      },
++      "targets": [
++        {
++          "datasource": { "type": "prometheus", "uid": "prometheus" },
++          "editorMode": "code",
++          "expr": "rate(tempo_distributor_spans_received_total[1m])",
++          "instant": false,
++          "legendFormat": "{{tenant}}",
++          "refId": "A"
++        }
++      ],
++      "title": "Tempo Spans Ingested / sec",
++      "type": "timeseries"
++    },
++    {
++      "datasource": { "type": "loki", "uid": "loki" },
++      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
++      "id": 3,
++      "options": {
++        "dedupStrategy": "none",
++        "enableLogDetails": true,
++        "prettifyLogMessage": false,
++        "showCommonLabels": false,
++        "showLabels": false,
++        "showTime": true,
++        "sortOrder": "Descending",
++        "wrapLogMessage": true
++      },
++      "targets": [
++        {
++          "datasource": { "type": "loki", "uid": "loki" },
++          "editorMode": "code",
++          "expr": "{service_name=~\".+\"}",
++          "instant": false,
++          "legendFormat": "",
++          "queryType": "range",
++          "refId": "A"
++        }
++      ],
++      "title": "Recent Logs",
++      "type": "logs"
++    }
++  ],
++  "refresh": "10s",
++  "schemaVersion": 38,
++  "tags": ["observability", "otel"],
++  "templating": { "list": [] },
++  "time": { "from": "now-1h", "to": "now" },
++  "timepicker": {},
++  "timezone": "browser",
++  "title": "OTel Overview",
++  "uid": "otel-overview",
++  "version": 1
++}
+diff --git a/grafana/provisioning/datasources/datasources.yaml b/grafana/provisioning/datasources/datasources.yaml
+new file mode 100644
+index 0000000..d2d3471
+--- /dev/null
++++ b/grafana/provisioning/datasources/datasources.yaml
+@@ -0,0 +1,35 @@
++apiVersion: 1
++
++datasources:
++  - name: Tempo
++    type: tempo
++    uid: tempo
++    url: http://tempo:3200
++    access: proxy
++    isDefault: true
++    jsonData:
++      httpMethod: GET
++      tracesToLogsV2:
++        datasourceUid: loki
++        spanStartTimeShift: "-1m"
++        spanEndTimeShift: "1m"
++        filterByTraceID: true
++        filterBySpanID: false
++      serviceMap:
++        datasourceUid: prometheus
++      nodeGraph:
++        enabled: true
++
++  - name: Loki
++    type: loki
++    uid: loki
++    url: http://loki:3100
++    access: proxy
++
++  - name: Prometheus
++    type: prometheus
++    uid: prometheus
++    url: http://prometheus:9090
++    access: proxy
++    jsonData:
++      httpMethod: POST
+diff --git a/loki-config.yaml b/loki-config.yaml
+new file mode 100644
+index 0000000..089bd11
+--- /dev/null
++++ b/loki-config.yaml
+@@ -0,0 +1,47 @@
++auth_enabled: false
++
++server:
++  http_listen_port: 3100
++  grpc_listen_port: 9096
++
++common:
++  instance_addr: 127.0.0.1
++  path_prefix: /loki
++  replication_factor: 1
++  ring:
++    kvstore:
++      store: inmemory
++
++schema_config:
++  configs:
++    - from: 2024-01-01
++      store: tsdb
++      object_store: filesystem
++      schema: v13
++      index:
++        prefix: index_
++        period: 24h
++
++storage_config:
++  tsdb_shipper:
++    active_index_directory: /loki/index
++    cache_location: /loki/index_cache
++  filesystem:
++    directory: /loki/chunks
++
++compactor:
++  working_directory: /loki/compactor
++  compaction_interval: 5m
++
++limits_config:
++  allow_structured_metadata: true
++  volume_enabled: true
++  ingestion_rate_mb: 10
++  ingestion_burst_size_mb: 20
++
++query_range:
++  results_cache:
++    cache:
++      embedded_cache:
++        enabled: true
++        max_size_mb: 100
+diff --git a/otel-collector-config.yaml b/otel-collector-config.yaml
+new file mode 100644
+index 0000000..0f5635f
+--- /dev/null
++++ b/otel-collector-config.yaml
+@@ -0,0 +1,47 @@
++extensions:
++  health_check:
++    endpoint: 0.0.0.0:13133
++
++receivers:
++  otlp:
++    protocols:
++      grpc:
++        endpoint: 0.0.0.0:4317
++      http:
++        endpoint: 0.0.0.0:4318
++
++processors:
++  batch: {}
++  memory_limiter:
++    check_interval: 1s
++    limit_mib: 512
++
++exporters:
++  otlp/tempo:
++    endpoint: tempo:4317
++    tls:
++      insecure: true
++  loki:
++    endpoint: http://loki:3100/loki/api/v1/push
++    default_labels_enabled:
++      exporter: false
++      job: true
++      level: true
++  prometheus:
++    endpoint: 0.0.0.0:8889
++
++service:
++  extensions: [health_check]
++  pipelines:
++    traces:
++      receivers: [otlp]
++      processors: [memory_limiter, batch]
++      exporters: [otlp/tempo]
++    logs:
++      receivers: [otlp]
++      processors: [memory_limiter, batch]
++      exporters: [loki]
++    metrics:
++      receivers: [otlp]
++      processors: [memory_limiter, batch]
++      exporters: [prometheus]
+diff --git a/prometheus.yml b/prometheus.yml
+new file mode 100644
+index 0000000..93543a0
+--- /dev/null
++++ b/prometheus.yml
+@@ -0,0 +1,7 @@
++global:
++  scrape_interval: 15s
++
++scrape_configs:
++  - job_name: otel-collector
++    static_configs:
++      - targets: [otel-collector:8889]
+diff --git a/tempo.yaml b/tempo.yaml
+new file mode 100644
+index 0000000..95b9d68
+--- /dev/null
++++ b/tempo.yaml
+@@ -0,0 +1,27 @@
++server:
++  http_listen_port: 3200
++
++distributor:
++  receivers:
++    otlp:
++      protocols:
++        grpc:
++          endpoint: 0.0.0.0:4317
++        http:
++          endpoint: 0.0.0.0:4318
++
++ingester:
++  trace_idle_period: 10s
++  max_block_duration: 5m
++
++compactor:
++  compaction:
++    block_retention: 1h
++
++storage:
++  trace:
++    backend: local
++    local:
++      path: /var/tempo/blocks
++    wal:
++      path: /var/tempo/wal
+diff --git a/test/synthetic-trace.json b/test/synthetic-trace.json
+new file mode 100644
+index 0000000..d56f058
+--- /dev/null
++++ b/test/synthetic-trace.json
+@@ -0,0 +1,44 @@
++{
++  "resourceSpans": [
++    {
++      "resource": {
++        "attributes": [
++          {
++            "key": "service.name",
++            "value": { "stringValue": "smoke-test" }
++          },
++          {
++            "key": "service.version",
++            "value": { "stringValue": "0.0.1" }
++          }
++        ]
++      },
++      "scopeSpans": [
++        {
++          "scope": {
++            "name": "smoke-test-tracer",
++            "version": "1.0.0"
++          },
++          "spans": [
++            {
++              "traceId": "5b8aa5a2d2c872e8321cf37308d69df2",
++              "spanId": "051581bf3cb55c13",
++              "parentSpanId": "",
++              "name": "synthetic-test-span",
++              "kind": 2,
++              "startTimeUnixNano": "1780704000000000000",
++              "endTimeUnixNano": "1780704001000000000",
++              "attributes": [
++                {
++                  "key": "test.type",
++                  "value": { "stringValue": "smoke" }
++                }
++              ],
++              "status": { "code": 1 }
++            }
++          ]
++        }
++      ]
++    }
++  ]
++}
+-- 
+2.43.0
+

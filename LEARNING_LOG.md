@@ -14,9 +14,9 @@ A: Define one pipeline per signal type in the Collector's `service.pipelines` bl
 Q: How do you avoid re-configuring datasources every time the Grafana container is recreated?
 A: Mount YAML files into `/etc/grafana/provisioning/datasources/` and `/etc/grafana/provisioning/dashboards/`. Grafana reads them on startup and hot-reloads on change (`updateIntervalSeconds: 30`). No manual UI steps required.
 
-**OTel Collector `health_check` extension for Docker healthchecks**
-Q: How do you add a meaningful Docker healthcheck to the OTel Collector container?
-A: Enable the `health_check` extension (`endpoint: 0.0.0.0:13133`) in the Collector config and list it under `service.extensions`. The otel-collector-contrib Alpine image includes `wget`, so `wget -q --spider http://localhost:13133/` works as the healthcheck test.
+**OTel Collector `health_check` extension**
+Q: How do you verify the OTel Collector is ready inside the container?
+A: Enable the `health_check` extension (`endpoint: 0.0.0.0:13133`) in the Collector config and list it under `service.extensions`. The extension logs `"Health Check state change" status: ready` when all pipelines are up. You can probe it from a sidecar or from the host — but NOT via Docker's `CMD-SHELL` healthcheck, because `otel-collector-contrib` is a distroless image with no shell (see Anti-Patterns).
 
 **Tempo monolithic mode for local dev**
 Q: When is Tempo monolithic mode appropriate vs. distributed?
@@ -50,6 +50,10 @@ A: Loki refuses to ingest any data until that date is reached — the schema isn
 Q: Does Tempo's OTLP receiver port need to be mapped to localhost?
 A: No. The Collector reaches Tempo via the Docker bridge (`tempo:4317`). Only port 3200 (Tempo HTTP API) needs localhost exposure for Grafana datasource queries. Publishing 4317 from Tempo would create a confusing second OTLP endpoint on localhost alongside the Collector's.
 
+**`CMD-SHELL` healthcheck in a distroless image**
+Q: What breaks when you use `CMD-SHELL` as the Docker healthcheck test form for a distroless container?
+A: Docker injects `/bin/sh -c` to run the shell string. Distroless images have no `/bin/sh` — the exec fails immediately with `OCI runtime exec failed: exec: "/bin/sh": stat /bin/sh: no such file or directory` and Docker marks the container permanently unhealthy even when the process inside is fully running. Use `disable: true` if no probe binary is available in the image, or use `CMD` with a binary known to exist in the image.
+
 **Anon Grafana auth without disabling the login form**
 Q: `GF_AUTH_ANONYMOUS_ENABLED=true` is set — is that enough for frictionless local access?
 A: It grants access but leaves the login button visible, which is confusing. Also add `GF_AUTH_DISABLE_LOGIN_FORM=true` to make the intent explicit.
@@ -65,6 +69,12 @@ Resolution: `git remote add origin <url>` before any commit.
 
 Q: Why might git commit signing fail with HTTP 400 in a Claude Code remote session?
 A: The platform signing server needs a configured remote origin to authorize the signature. A fresh `git init` repo with no remote will be rejected. Add the remote first.
+
+**`otel-collector-contrib` is distroless — no shell, no wget**
+During the first live smoke test, `docker compose ps` showed `otel-collector` as `unhealthy` despite the container emitting `"Everything is ready"` in its logs. `docker inspect` revealed the healthcheck was failing with `exec: "/bin/sh": stat /bin/sh: no such file or directory` — the image is based on scratch/distroless, not Alpine. The prior LL entry (now corrected) incorrectly assumed it was Alpine with `wget`. Fix: `healthcheck.disable: true` in `docker-compose.yml`.
+
+Q: How do you diagnose a container that is `unhealthy` but its process logs show it's fully running?
+A: Run `docker inspect <container> --format '{{json .State.Health}}'` and read the `Log[].Output` field. The exit code and message will pinpoint whether it's the probe itself that failed rather than the service.
 
 **`docker info` succeeded but `docker compose up` failed — socket absent**
 `docker info` returned valid output (Engine 29.3.1), suggesting Docker was available. But `/var/run/docker.sock` did not exist and Compose failed immediately with "no such file or directory." The CLI was connecting to a remote Docker daemon via TCP; Compose defaults to the socket path and doesn't inherit the TCP context. Stack verification had to be deferred to local.
@@ -105,3 +115,9 @@ Anon auth alone leaves the login UI visible. Disabling the form makes the local-
 
 **`tracesToLogsV2` provisioned at stack bootstrap**
 Wired the Tempo→Loki correlation link on day zero. The plumbing is in place before Phase 1 services exist; no Grafana UI editing needed when traces and logs start flowing.
+
+**`healthcheck.disable: true` for otel-collector-contrib**
+Rather than switching to a different base image or adding a sidecar probe, the healthcheck was disabled. Rationale: the `health_check` extension inside the container still reports readiness via its own endpoint; Docker's healthcheck status is only cosmetic for local dev. If a real liveness gate is needed (e.g. `depends_on: condition: service_healthy`), the correct fix is to build a thin wrapper image or switch to the non-distroless variant — not to paper over it with a bogus probe.
+
+**`{"partialSuccess":{}}` is the correct OTLP success response**
+OTLP HTTP exporters return `{"partialSuccess":{}}` on full success, not `{}`. A non-empty `partialSuccess` object (with `rejectedSpans` + `errorMessage`) indicates partial rejection. Documented in README smoke-test section.

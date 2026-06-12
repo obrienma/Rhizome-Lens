@@ -30,12 +30,15 @@ Services (future phases)
 docker compose up -d
 ```
 
-Wait ~30 seconds for all services to pass their healthchecks, then verify:
+Wait ~30 seconds for services to start, then verify:
 
 ```bash
 docker compose ps
-# All five services should show "healthy"
+# tempo, loki, prometheus, grafana → "healthy"
+# otel-collector → "Up" (no healthcheck — see note below)
 ```
+
+> **Note:** `otel-collector-contrib` is a distroless image with no shell or `wget`. The `CMD-SHELL` healthcheck form cannot execute inside it. The collector's own `health_check` extension still runs on `:13133` inside the container and is confirmed healthy via its logs.
 
 Open Grafana at [http://localhost:3000](http://localhost:3000) — no login required. Navigate to **Dashboards → OTel Overview** for the starter dashboard.
 
@@ -51,7 +54,7 @@ curl -X POST http://localhost:4318/v1/traces \
   -d @test/synthetic-trace.json
 ```
 
-Expected response: `HTTP 200` with `{}` body.
+Expected response: `HTTP 200` with `{"partialSuccess":{}}` body. An empty `partialSuccess` object means all spans were accepted (non-empty would list rejections).
 
 Then in Grafana: **Explore → Tempo → Search** — filter by service name `smoke-test`. The trace should appear within a few seconds.
 
@@ -80,4 +83,4 @@ docker compose down -v       # stop containers and delete all stored data
 
 ---
 
-See [OBSERVABILITY_MIGRATION_PLAN.md](./OBSERVABILITY_MIGRATION_PLAN.md) for the full four-service migration plan.
+See `docs/` for phase plans and architecture decisions.
