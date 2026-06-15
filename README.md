@@ -60,6 +60,17 @@ Then in Grafana: **Explore → Tempo → Search** — filter by service name `sm
 
 ---
 
+## Dashboards
+
+| Dashboard | UID | Shows |
+|---|---|---|
+| **OTel Overview** | `otel-overview` | Collector health — accepted spans/sec, Tempo spans ingested/sec, recent logs across all services. |
+| **EventHorizon Service** | `eventhorizon-service` | Per-service RED metrics for `event-horizon` — request rate by status code, 5xx error rate, p50/p95/p99 latency — plus Node.js runtime health (event-loop lag, V8 heap, MongoDB connection pool), trace-correlated logs, and a recent-traces table (TraceQL search over HTTP status, method, and event type). |
+
+For a full distributed-trace view (HTTP ingest → AMQP publish → AMQP consume → processing span), use **Explore → Tempo → `{resource.service.name="event-horizon"}`** rather than a dashboard panel — trace waterfalls aren't dashboard-friendly.
+
+---
+
 ## Port reference
 
 | Service | Port | Purpose |

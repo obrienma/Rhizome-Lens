@@ -42,6 +42,10 @@ A: No. `:8889` (the `prometheus` exporter) only carries metrics applications sen
 Q: EventHorizon has no log exporter package and no logging module, yet Loki has a live `event-horizon` stream with `traceid`/`spanid` on every line — how?
 A: `@opentelemetry/sdk-node` 0.218.x with `auto-instrumentations-node` wires the Logs Bridge into Fastify's built-in pino logger and exports via OTLP automatically. Phase 3's task to "replace console.* with structured logging" was effectively delivered by the SDK version alone.
 
+**Opt-in fault injection behind a default-zero rate**
+Q: How do you make a dashboard's error-rate panels show realistic non-zero values without changing behavior for normal dev runs and tests?
+A: Gate the fault behind an env var/CLI flag that defaults to `0` and is checked with `Math.random() < rate` *after* normal validation succeeds. At `rate = 0`, `Math.random() < 0` is always false, so the code path is provably inert by default — `npm test` and `npm run dev` are unaffected unless the flag is set. Pair a server-side 5xx knob (throw after validation) with a client-side 4xx knob (send a payload that fails schema validation) to get a realistic mixed-status traffic shape from one seed run.
+
 ---
 
 ### Anti-Patterns Avoided
@@ -77,6 +81,10 @@ A: Whichever process binds the host port "wins" silently — `docker compose ps`
 **Assuming a metric name's `_total` suffix without checking what's actually exported**
 Q: A dashboard panel queries `rate(otelcol_receiver_accepted_spans_total[1m])` and shows "No data" with no error — why?
 A: The metric is actually named `otelcol_receiver_accepted_spans` (no `_total`). Prometheus returns a valid empty result for a nonexistent metric, not an error — a panel can look fully configured and just permanently show nothing. Check `/api/v1/label/__name__/values` rather than assuming naming conventions.
+
+**Reverse-engineering a running container's bundled frontend JS on a memory-constrained WSL2 host**
+Q: Why did `docker compose exec grafana sh -c 'find ... | strings ...'`, a `docker compose cp` of a 368KB JS bundle, and a background `python3` regex scan — run together — crash the whole machine?
+A: WSL2 runs as a single VM with a fixed memory ceiling (7.6Gi here). Several heavyweight container-introspection operations stacked concurrently exhausted it, crashing the VM and killing every Docker container across every project, not just the one being inspected. When the question is "what query shape does this datasource expect," query the datasource's own documented API directly (e.g. Tempo's `/api/search` on `:3200`) instead of disassembling the frontend that calls it.
 
 ---
 
@@ -132,6 +140,10 @@ A: Unescaped `[...]`/`{...}` in the URL triggers curl's globbing parser, which c
 Q: Why can a fully-passing test suite coexist with code that 500s on every real request?
 A: `obj?.method(arg)` skips evaluating `arg` too when `obj` is nullish. If tests never produce a non-null `obj` (here, no active span without real OTel instrumentation), a buggy `arg` is structurally unreachable in tests but fully reachable in production.
 
+**Grafana 11.2.0's bundled Tempo plugin rejects `queryType: "traceqlSearch"` via `/api/ds/query`**
+Q: A Tempo datasource query body with `queryType: "traceqlSearch"` (or `"traceql"`, or `""`) sent to `/api/ds/query` returns "unsupported query type" from the `tsdb.tempo` logger — what query types does this endpoint actually support?
+A: Only `"traceId"` (look up a single trace by hex ID) was confirmed working via `/api/ds/query` on this version. TraceQL *search* queries (`tableType: "spans"` / `"traces"`) are issued by Grafana's frontend via a separate `CallResource` route (`/api/datasources/uid/tempo/resources/search`), not the `QueryData` endpoint. To validate a TraceQL search query without a browser session, hit Tempo's own `/api/search` directly — same TraceQL syntax (`q=<query>&limit=N`), no Grafana auth/session involved.
+
 ---
 
 ### Decisions
@@ -177,3 +189,9 @@ The Phase 0 dashboard's "Tempo Spans Ingested/sec" panel already had the correct
 
 **Fixed the EventHorizon `Buffer.byteLength` bug on discovery rather than deferring**
 Found during live smoke-testing of the Phase 0 stack against Phase 3, not during Phase 0 work itself — but it blocked every ingest request. Fixed directly in EventHorizon (`a9e2e4a`) rather than just logged, since a non-functional system under test isn't useful for validating the observability stack.
+
+**Built the "EventHorizon Service" dashboard as an early, narrow slice of Phase 5**
+The migration plan defers Phase 5 (dashboards) "until you have a concrete need (e.g. dashboard screenshots for portfolio site)" — that need arrived. Rather than pulling forward all of Phase 5, only a per-service RED + Node.js runtime-health dashboard (`grafana/provisioning/dashboards/eventhorizon-service.json`) was built, using metrics `auto-instrumentations-node` already exports via OTLP (`http_server_duration_milliseconds_*`, `db_client_connections_usage`, `nodejs_eventloop_delay_*`, `v8js_memory_heap_used_bytes`). The plan's TraceQL/wide-span business dashboards (queries over `event.type`/`classification`) remain deferred — this slice answers "is the service healthy," which is a different question from "what is the service doing."
+
+**"Recent Traces" panel written from direct-Tempo-API validation; rendering verification deferred to the browser**
+After the WSL crash ruled out further Grafana-internals investigation, panel id 8 ("Recent Traces", `eventhorizon-service.json`) was written using the `queryType: "traceqlSearch"` / `tableType: "spans"` shape Grafana's own Tempo query editor produces for a search query — but the TraceQL itself (`{resource.service.name="event-horizon" && kind=server} | select(.http.status_code, .http.method, .event.type, status)`) was validated by querying Tempo's `/api/search` directly, confirming it returns per-span `http.status_code`, `http.method`, `event.type`, and OTel `status` for every recent request, including the live-injected 422s and 500s. Whether Grafana's frontend renders this panel as expected is left for the user to confirm at `http://localhost:3300`; if it shows "No data", the documented fallback is `tableType: "traces"` with the simpler query `{resource.service.name="event-horizon"}`.
