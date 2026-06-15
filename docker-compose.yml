@@ -62,6 +62,11 @@ services:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
       - "9090:9090"
+    # Lets the `rabbitmq` scrape job reach EventHorizon's RabbitMQ (a separate
+    # compose project) at host.docker.internal:15692. Required on Linux/WSL2,
+    # where this alias is not provided automatically as it is on Docker Desktop.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - observability
     healthcheck:
