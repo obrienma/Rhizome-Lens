@@ -65,9 +65,15 @@ Then in Grafana: **Explore → Tempo → Search** — filter by service name `sm
 | Dashboard | UID | Shows |
 |---|---|---|
 | **OTel Overview** | `otel-overview` | Collector health — accepted spans/sec, Tempo spans ingested/sec, recent logs across all services. |
-| **EventHorizon Service** | `eventhorizon-service` | Per-service RED metrics for `event-horizon` — request rate by status code, 5xx error rate, p50/p95/p99 latency — plus Node.js runtime health (event-loop lag, V8 heap, MongoDB connection pool), trace-correlated logs, and a recent-traces table (TraceQL search over HTTP status, method, and event type). |
+| **EventHorizon Service** | `eventhorizon-service` | Per-service RED metrics for `event-horizon` — request rate by status code, 5xx error rate, p50/p95/p99 latency — plus Node.js runtime health (event-loop lag, V8 heap, MongoDB connection pool), RabbitMQ queue & DLQ depth vs publish rate, per-type event throughput, MongoDB change-stream lag, async-failure rate (`events_failed_total`) plus an async-failure table (error spans the 5xx panel can't see — ingest returns 202 before worker/DLQ failures occur), trace-correlated logs, and a recent-traces table (TraceQL search over HTTP status, method, and event type). |
 
 For a full distributed-trace view (HTTP ingest → AMQP publish → AMQP consume → processing span), use **Explore → Tempo → `{resource.service.name="event-horizon"}`** rather than a dashboard panel — trace waterfalls aren't dashboard-friendly.
+
+> **The RabbitMQ panels read per-queue metrics from the broker's own exporter.** `RabbitMQ Queue Health` is scraped from EventHorizon's broker via the bundled `rabbitmq_prometheus` plugin on `:15692` (enabled by default in `rabbitmq:3-management-alpine`, verified returning HTTP 200). RabbitMQ runs in a *separate* compose project, so Prometheus reaches it through the host gateway (`host.docker.internal:15692`; see the `rabbitmq` job in `prometheus.yml` and `extra_hosts` on the prometheus service — required on Linux/WSL2).
+>
+> Two things to know:
+> - The job scrapes **`/metrics/per-object`**, not the default `/metrics`. The default endpoint is *aggregated* — it sums all queues into label-less totals, so a `{queue="events.work"}` filter matches nothing. Per-object is what carries the per-queue labels.
+> - The panels populate only once EventHorizon's worker is running and has declared the `events.work` / `events.dead` queues (`rabbitmq_queues` is `0` until then), and after Prometheus has loaded the job (`docker compose up -d --force-recreate prometheus` if it was already running when the job was added). Empty panels in that window are expected, not a misconfiguration.
 
 ---
 

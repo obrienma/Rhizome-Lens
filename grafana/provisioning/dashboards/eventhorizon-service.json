@@ -362,7 +362,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "Queue and dead-letter depth (left axis) against publish vs. deliver rate (right axis). A persistent gap where publish > deliver, or a rising DLQ, means the worker is falling behind. RabbitMQ is scraped via the rabbitmq_prometheus plugin (:15692) across the compose-project boundary.",
+      "description": "Work-queue and dead-letter depth (left axis) with publish rate (right axis). A rising DLQ, or depth climbing while publish rate stays high, means the worker is falling behind. Per-queue series require the /metrics/per-object scrape path and populate once EventHorizon's worker declares events.work / events.dead. (Delivery is a per-channel metric in RabbitMQ, so there is no per-queue deliver counter to chart here.)",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -407,7 +407,7 @@
           }
         ]
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
       "id": 9,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
@@ -437,14 +437,6 @@
           "instant": false,
           "legendFormat": "publish rate",
           "refId": "C"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "editorMode": "code",
-          "expr": "rate(rabbitmq_queue_messages_delivered_total{queue=\"events.work\"}[1m])",
-          "instant": false,
-          "legendFormat": "deliver rate",
-          "refId": "D"
         }
       ],
       "title": "RabbitMQ Queue Health",
@@ -489,7 +481,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
       "id": 10,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
@@ -547,7 +539,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
       "id": 11,
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
@@ -567,9 +559,67 @@
       "type": "timeseries"
     },
     {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "description": "Rate of dead-lettered events from the events_failed_total counter, incremented on the worker's dead-letter path after retries are exhausted. Always-on and alertable — unlike the HTTP 5xx panel it sees failures that occur after the 202 response. The companion 'Async Failures (error spans)' table holds the per-failure detail.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 80 }
+            ]
+          },
+          "unit": "cps"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
+      "id": 13,
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "editorMode": "code",
+          "expr": "sum(rate(events_failed_total[1m])) by (event_type)",
+          "instant": false,
+          "legendFormat": "{{event_type}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Async Failure Rate",
+      "type": "timeseries"
+    },
+    {
       "datasource": { "type": "tempo", "uid": "tempo" },
-      "description": "Async pipeline failures that the HTTP 5xx panel structurally cannot see: ingest returns 202, so worker retry/DLQ failures happen after the response. These error spans are the only signal for those failures today (no metric required). For an alertable version, add an events_failed_total counter on the worker dead-letter path.",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "description": "Async pipeline failures that the HTTP 5xx panel structurally cannot see: ingest returns 202, so worker retry/DLQ failures happen after the response. These error spans carry the per-failure detail (exception type/message, event type); the companion 'Async Failure Rate' panel tracks events_failed_total for alerting.",
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 24 },
       "id": 12,
       "targets": [
         {
@@ -641,5 +691,5 @@
   "timezone": "browser",
   "title": "EventHorizon Service",
   "uid": "eventhorizon-service",
-  "version": 3
+  "version": 4
 }

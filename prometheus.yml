@@ -22,5 +22,12 @@ scrape_configs:
   # host.docker.internal resolves automatically; on Linux/WSL2 the host-gateway
   # alias is required.
   - job_name: rabbitmq
+    # Per-queue series (queue="events.work" / "events.dead") only exist on the
+    # /metrics/per-object endpoint. The default /metrics is AGGREGATED — it sums
+    # every queue into label-less totals, so a {queue="..."} filter matches
+    # nothing. Verified against the live exporter: default /metrics carries zero
+    # queue= labels. Note: delivery is counted per-channel, not per-queue, so
+    # there is no rabbitmq_queue_messages_delivered_total — only _published_total.
+    metrics_path: /metrics/per-object
     static_configs:
       - targets: ["host.docker.internal:15692"]

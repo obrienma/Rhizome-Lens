@@ -195,3 +195,94 @@ The migration plan defers Phase 5 (dashboards) "until you have a concrete need (
 
 **"Recent Traces" panel written from direct-Tempo-API validation; rendering verification deferred to the browser**
 After the WSL crash ruled out further Grafana-internals investigation, panel id 8 ("Recent Traces", `eventhorizon-service.json`) was written using the `queryType: "traceqlSearch"` / `tableType: "spans"` shape Grafana's own Tempo query editor produces for a search query — but the TraceQL itself (`{resource.service.name="event-horizon" && kind=server} | select(.http.status_code, .http.method, .event.type, status)`) was validated by querying Tempo's `/api/search` directly, confirming it returns per-span `http.status_code`, `http.method`, `event.type`, and OTel `status` for every recent request, including the live-injected 422s and 500s. Whether Grafana's frontend renders this panel as expected is left for the user to confirm at `http://localhost:3300`; if it shows "No data", the documented fallback is `tableType: "traces"` with the simpler query `{resource.service.name="event-horizon"}`.
+
+---
+
+## Phase 0 (cont.) — EventHorizon dashboard expansion: RabbitMQ scrape, throughput, async-failure panels
+
+### Patterns
+
+**Cross-compose-project scrape via the host gateway**
+Q: Prometheus runs in this stack's `observability` network; RabbitMQ runs in EventHorizon's separate compose project. How does one scrape the other without merging the two stacks?
+A: Reach it through the host, not container DNS. Target `host.docker.internal:15692` and add `extra_hosts: ["host.docker.internal:host-gateway"]` to the Prometheus service. `host-gateway` is a Docker-reserved alias resolving to the host's gateway IP. The alternative — a shared external Docker network referenced by both compose files — couples the two projects' lifecycles; the host-gateway hop keeps them independent.
+
+**`host.docker.internal` is not automatic on Linux/WSL2**
+Q: The same `host.docker.internal:15692` target "just works" on a teammate's Mac but resolves to nothing on WSL2 — why?
+A: Docker Desktop (Mac/Windows) injects the `host.docker.internal` alias into every container automatically. Native Linux / WSL2 engines do not — it does not exist unless you add the `host-gateway` `extra_hosts` mapping yourself. Same compose file, different behaviour per engine.
+
+**One panel, two units: dual-axis via a `byRegexp` field override**
+Q: Queue depth is a count; publish/deliver throughput is a rate (msg/s). How do you show both on a single timeseries panel without one flattening the other?
+A: Default the panel unit to `short` (counts), then add a field override matching the rate series (`byRegexp: /.*rate.*/`) that sets `custom.axisPlacement: right` and `unit: cps`. Grafana renders a second Y axis for just those series. Legend naming is load-bearing — the override matches on series name.
+
+### Anti-Patterns Avoided
+
+**Unlabelled `rate()` on a per-queue counter**
+Q: Why scope `rate(rabbitmq_queue_messages_published_total{queue="events.work"}[1m])` to one queue instead of the bare `rate(rabbitmq_queue_messages_published_total[1m])`?
+A: `rabbitmq_prometheus` exports the counter per queue, so the unlabelled form returns one series per queue (work, dead, any others) — cluttering the right axis with DLQ/throwaway series that don't speak to worker backlog. Backlog detection only cares about the work queue's publish-vs-deliver gap.
+
+**`json.dump` round-trip to reorder panels**
+Q: The panels needed reordering so array order matches on-screen order — why not load the JSON, sort `panels` by `gridPos`, and re-dump?
+A: The dashboard file uses hand-curated inline objects (`{ "type": "loki", "uid": "loki" }`) that `json.dump(indent=2)` would explode into multi-line form, turning a two-panel move into a whole-file diff. Moved the blocks with targeted text edits and validated with a read-only `json.load` instead — minimal diff, formatting preserved.
+
+### Challenges
+
+**The new RabbitMQ scrape target legitimately shows `DOWN` from this repo alone**
+The `rabbitmq` job can only go `UP` once the EventHorizon repo (a) enables the bundled `rabbitmq_prometheus` plugin on its broker and (b) publishes `15692` on the host. Both live in the other repo, so committing this change leaves a red target in Prometheus until that side is wired — expected, not a misconfiguration. Documented in the README so a future reader doesn't "fix" a working config.
+
+Q: A freshly-added Prometheus scrape target shows `DOWN` immediately after deploy — when is that expected rather than a bug?
+A: When the scraped service lives in a different compose project/repo that hasn't yet exposed the metrics endpoint. The scrape config declares intent; the target stays down until the other side ships the port + exporter.
+
+### Decisions
+
+**Host-gateway bridge over a shared external Docker network**
+Chose `extra_hosts: host.docker.internal:host-gateway` + a host-port target over defining a shared external network referenced by both compose files. Rationale: the two stacks stay lifecycle-independent (either can be torn down without breaking the other's network reference); the cost is the Linux-specific `extra_hosts` line, documented inline.
+
+**Dual-axis RabbitMQ panel to hold at four new panels**
+The spec listed four metric groups but six queries across two unit families (counts vs rates). Rather than spawn a fifth panel, folded queue/DLQ depth (left) and publish/deliver rate (right) into one dual-axis "RabbitMQ Queue Health" panel — which also reads as a single question ("is the queue backing up?"). Kept the total to exactly four additive panels.
+
+**Async failures as a TraceQL panel, not a new metric (yet)**
+Closed the "HTTP 5xx panel can't see post-202 worker/DLQ failures" gap with a Tempo table over `status=error` spans — no new instrumentation. Deferred the optional `events_failed_total{event_type}` counter until there's a concrete alerting need, consistent with the plan's "reserve Prometheus counters for alerts" posture and "wait until it hurts."
+
+**Left panel `id`s non-sequential after the array reorder**
+Panel ids read 1–6, 9–12, 7–8 after moving logs/traces below the new panels. Ids are stable identifiers nothing references by number; resequencing would add churn for zero functional gain, so they were left as-is — array order and `gridPos` (the rendering source of truth) both match the on-screen layout.
+
+---
+
+## Phase 0 (cont.) — verifying the RabbitMQ panels against the live exporter
+
+Once EventHorizon's Phase 18 brought the `rabbitmq_prometheus` source live (`:15692` → HTTP 200), the panels written blind in the previous step could finally be checked against reality. Two of the queries were wrong — verification caught what the "don't assume a metric name" anti-pattern predicts.
+
+### Anti-Patterns Avoided
+
+**Scraping `rabbitmq_prometheus`'s default `/metrics` when you need per-queue series**
+Q: A `RabbitMQ Queue Health` panel filters `rabbitmq_queue_messages{queue="events.work"}` but shows nothing even though the exporter is live and returning data — why?
+A: The default `/metrics` endpoint is **aggregated**: it sums every queue into a single label-less `rabbitmq_queue_messages` total, carrying zero `queue=` labels (verified: `grep -c 'queue=' → 0`). Per-queue series live only on `/metrics/per-object` (or require `prometheus.return_per_object_metrics = true` broker-side). A `{queue="..."}` filter against the aggregated endpoint matches nothing, silently. Set `metrics_path: /metrics/per-object` on the scrape job.
+
+**Charting `rabbitmq_queue_messages_delivered_total` — a metric that does not exist**
+Q: The spec paired `rate(...published_total)` with `rate(...delivered_total)` for a publish-vs-deliver view. Why does the deliver series never render?
+A: There is no `rabbitmq_queue_messages_delivered_total`. The `rabbitmq_queue_messages*` family has `_published_total` but no queue-level delivered counter — delivery is tracked per *channel* (`rabbitmq_channel_messages_delivered_total`), not per queue. Confirmed by enumerating `# TYPE rabbitmq_queue_messages*`. The series was dropped rather than shipped as a permanent "No data" line; backlog is read from depth trend + publish rate + the app-side `events_processed_total`.
+
+### Challenges
+
+**Couldn't fully verify per-queue series because no queues existed yet**
+`rabbitmq_queues 0` / `rabbitmq_connections 0` — EventHorizon's worker wasn't connected, so `events.work` / `events.dead` weren't declared and no per-queue series existed to inspect. The `queue` label *name* is RabbitMQ-documented (high confidence); the label *values* can only be confirmed once the worker runs. Same root cause left the collector's `:8889` with no `events_processed_total` / `events_failed_total` / `eventhorizon_change_stream_lag_milliseconds`: the pipeline is healthy, but nothing emits while the app is down.
+
+Q: The exporter is up and returns 200, but the per-queue series you want aren't there — bug or expected?
+A: Expected if `rabbitmq_queues` is `0`. RabbitMQ only exposes per-object series for objects that currently exist; an idle broker with no declared queues has nothing per-queue to report. Verify label *values* against a running producer, not an idle broker.
+
+**The running Prometheus was serving a stale config**
+After committing the `rabbitmq` scrape job, `/api/v1/targets` listed only `otel-collector`, `otel-collector-internal`, `tempo` — no `rabbitmq`. The job was on disk but the already-running Prometheus had not reloaded it. Editing `prometheus.yml` does not hot-apply; the process needs `--force-recreate` (the documented WSL2-safe reload) or a `/-/reload`. A scrape config can be correct on disk and absent from the live instance simultaneously.
+
+Q: You added a scrape job and the target isn't in `/api/v1/targets` — first thing to check?
+A: Whether the running Prometheus actually reloaded the file. The config on disk and the config in memory are independent; `docker compose up -d --force-recreate prometheus` re-reads it.
+
+### Decisions
+
+**Scrape `/metrics/per-object` over enabling `return_per_object_metrics` broker-side**
+Both expose per-queue labels. Chose the scrape-path option because it keeps the entire change in *this* repo (`prometheus.yml`) with no edit to EventHorizon's broker config — and per-object's cost (it's heavier with thousands of objects) is irrelevant for a two-queue pipeline.
+
+**Dropped the deliver-rate series instead of shipping a non-existent metric**
+Rather than leave a permanently-empty "deliver rate" line (or invent a channel-level substitute that can't be filtered to `events.work`), the series was removed and the panel description now states plainly that RabbitMQ has no per-queue deliver counter. Backlog is legible from depth + publish rate without it.
+
+**Added the `events_failed_total` Prometheus panel now that the counter is real (supersedes the earlier deferral)**
+The prior step deferred this counter "until an alert needs it." EventHorizon's Phase 18 shipped it anyway as an always-on dead-letter-path counter, so the deferral is moot — added an "Async Failure Rate" timeseries (`sum(rate(events_failed_total[1m])) by (event_type)`) beside the TraceQL detail table. The Prometheus panel carries the alertable rate; the TraceQL table carries the per-failure forensics. This is the intended end state of the plan's "Prometheus for alerts, spans for detail" split.

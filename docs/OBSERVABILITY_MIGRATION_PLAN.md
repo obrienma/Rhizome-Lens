@@ -265,6 +265,8 @@ For each phase below:
 
 This phase is decorative compared to traces. The interview talking point is "distributed tracing across async boundaries in four languages" — that lives entirely in phases 0–4. Defer this phase until you have a concrete need (e.g. dashboard screenshots for portfolio site).
 
+> **Early slices already shipped (Phase 0).** The `EventHorizon Service` dashboard was built ahead of this phase (see Phase 0 learning-log entries) and later extended with two operational panels whose need arrived during live validation: a **RabbitMQ Queue Health** panel (queue/DLQ depth vs publish-vs-deliver rate — the queue-backlog signal, scraped via `rabbitmq_prometheus` across the compose-project boundary) and an **Async Failures** TraceQL table that surfaces the post-`202` worker/DLQ failures the HTTP 5xx panel structurally cannot see. Both honour this phase's discipline: queue depth and drop rate are alerting signals (Prometheus), while the per-failure detail stays on spans (TraceQL). EventHorizon's Phase 18 later shipped the `events_failed_total{event_type}` counter on the worker dead-letter path, so the async-failure story now spans both a Prometheus "Async Failure Rate" panel (alertable) and the TraceQL detail table — the counter for the rate, the spans for the forensics.
+
 When ready:
 
 - Ship logs via OTel Collector → Loki from each service (most SDKs support this in the same OTLP exporter).
