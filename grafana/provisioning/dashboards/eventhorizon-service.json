@@ -433,7 +433,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "rate(rabbitmq_queue_messages_published_total{queue=\"events.work\"}[1m])",
+          "expr": "sum(rate(rabbitmq_queue_messages_published_total{queue=\"events.work\"}[1m]))",
           "instant": false,
           "legendFormat": "publish rate",
           "refId": "C"
@@ -560,7 +560,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "description": "Rate of dead-lettered events from the events_failed_total counter, incremented on the worker's dead-letter path after retries are exhausted. Always-on and alertable — unlike the HTTP 5xx panel it sees failures that occur after the 202 response. The companion 'Async Failures (error spans)' table holds the per-failure detail.",
+      "description": "Rate of dead-lettered events from the events_failed_total counter, incremented on the worker's dead-letter path after retries are exhausted. Grouped by failure_reason (the dimension that carries signal — e.g. parse_error); event_type is truthfully 'unknown' for pre-parse poison messages, so it is not the grouping key here. The {failure_reason!=\"\"} matcher drops legacy samples emitted before the label existed — without it they render as a stray 'value' series (Grafana's name for a series whose legendFormat resolves to empty). Always-on and alertable — unlike the HTTP 5xx panel it sees failures that occur after the 202 response. The companion 'Async Failures (error spans)' table holds the per-failure detail.",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -607,9 +607,9 @@
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "editorMode": "code",
-          "expr": "sum(rate(events_failed_total[1m])) by (event_type)",
+          "expr": "sum(rate(events_failed_total{failure_reason!=\"\"}[5m])) by (failure_reason)",
           "instant": false,
-          "legendFormat": "{{event_type}}",
+          "legendFormat": "{{failure_reason}}",
           "refId": "A"
         }
       ],
@@ -691,5 +691,5 @@
   "timezone": "browser",
   "title": "EventHorizon Service",
   "uid": "eventhorizon-service",
-  "version": 4
+  "version": 9
 }

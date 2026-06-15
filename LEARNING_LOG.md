@@ -252,6 +252,26 @@ Panel ids read 1–6, 9–12, 7–8 after moving logs/traces below the new panel
 
 Once EventHorizon's Phase 18 brought the `rabbitmq_prometheus` source live (`:15692` → HTTP 200), the panels written blind in the previous step could finally be checked against reality. Two of the queries were wrong — verification caught what the "don't assume a metric name" anti-pattern predicts.
 
+### Patterns
+
+**`or vector(0)` to render a counter's "never incremented" state as 0 instead of "No data"**
+Q: An `events_failed_total` rate panel shows "No data" when there have been zero failures — healthy, but ambiguous (looks identical to a broken query). How do you make it read a flat 0?
+A: Append `or vector(0)` so an empty result falls back to a 0-valued series — the same idiom the 5xx panel uses (`OR on() vector(0)`). Caveat for *grouped* queries: `vector(0)` has an empty label set, so when the left side is non-empty, `or` appends the 0-series *alongside* the real per-label lines. Grafana renders that empty-label series in the legend as **`unknown`** (not blank), which reads like a real failure type and is misleading; `or label_replace(vector(0), "<label>", "none", "", "")` labels it `none` instead.
+
+**But the baseline is only worth it before the counter's first increment.** A Prometheus counter series persists once it has been exposed at least once — so after the first failure, `sum(rate(events_failed_total[1m])) by (event_type)` is *never* empty again (it reports the real type at 0 when quiet, not "No data"). At that point the `or vector(0)` baseline is pure clutter: a permanent extra line beside the real data. Lifecycle rule: use the baseline only for counters that may never have incremented in a given environment; drop it once the metric is reliably present. We added it, watched `events_failed_total{event_type="unknown"}` start incrementing for real, then removed it — the panel now shows just the live series.
+
+**A real signal hid inside the "unknown" legend entry.** The yellow `unknown` line was not the empty-label baseline — `events_failed_total` genuinely carries `event_type="unknown"` (146 and climbing), because EventHorizon's dead-letter path can't classify a message that failed *before* it could be parsed. Lesson: don't reflexively "fix" an `unknown`/`none` legend entry as a cosmetic artifact — query the raw series first (`curl .../api/v1/query?query=<metric>`) to tell a rendering artifact apart from real data wearing an ugly label.
+
+**The fix for an uninformative grouping label was a query change, not a code change.** `event_type="unknown"` is *truthful* for pre-parse poison messages — the worker genuinely doesn't know the type. The useful dimension was a second label the counter already carried: `failure_reason="parse_error"`. So the panel was regrouped `sum(rate(events_failed_total[5m])) by (failure_reason)` with legend `{{failure_reason}}` — no EventHorizon change. Lesson: when a series' obvious grouping label is uniform-and-useless, enumerate its *other* labels before requesting an instrumentation change; the dimension you want may already be there. (`event_type` is still the right group for *processed* events, where it's populated — only the *failure* path is type-blind.)
+
+**Adding a label retroactively leaves a ghost "value" series in `by`-grouped panels**
+Q: After regrouping the panel `by (failure_reason)`, the legend showed two lines — a green **value** for older data and `parse_error` for newer. Same query the whole range; why two series?
+A: The `failure_reason` label was *added* partway through the visible window. Samples from before it existed have no `failure_reason`, so `by (failure_reason)` buckets them into an empty-labeled series; `{{failure_reason}}` resolves to empty, and Grafana names a nameless series **`value`** (its default value-column label). It's not a bug — it's the metric's own history at the label-introduction boundary, confirmed with a `query_range`: the `<ABSENT>` series ends exactly where `parse_error` begins. It scrolls off on its own as the window advances, or filter it immediately with a `{failure_reason!=""}` matcher (which excludes label-absent series, since absent ≡ `""` in PromQL). Kept the matcher permanently so the panel only ever charts reasoned failures.
+
+**`sum()` to collapse per-object RabbitMQ counters to one line**
+Q: `rate(rabbitmq_queue_messages_published_total{queue="events.work"}[1m])` on the per-object endpoint can return several series — why, and how do you get one line?
+A: Per-object counters carry `channel`, `exchange`, and `queue_vhost` labels beyond `queue`, so multiple producer channels yield multiple series. Wrap in `sum(rate(...))` to aggregate them into a single publish-rate line, since the panel only cares about per-queue throughput, not per-channel.
+
 ### Anti-Patterns Avoided
 
 **Scraping `rabbitmq_prometheus`'s default `/metrics` when you need per-queue series**
