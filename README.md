@@ -18,7 +18,7 @@ Services (future phases)
        │      │         │
        └──────┴────┬────┘
                    ▼
-              Grafana :3000
+              Grafana :3300
          (auto-provisioned datasources)
 ```
 
@@ -40,7 +40,7 @@ docker compose ps
 
 > **Note:** `otel-collector-contrib` is a distroless image with no shell or `wget`. The `CMD-SHELL` healthcheck form cannot execute inside it. The collector's own `health_check` extension still runs on `:13133` inside the container and is confirmed healthy via its logs.
 
-Open Grafana at [http://localhost:3000](http://localhost:3000) — no login required. Navigate to **Dashboards → OTel Overview** for the starter dashboard.
+Open Grafana at [http://localhost:3300](http://localhost:3300) — no login required. Navigate to **Dashboards → OTel Overview** for the starter dashboard.
 
 ---
 
@@ -66,11 +66,12 @@ Then in Grafana: **Explore → Tempo → Search** — filter by service name `sm
 |---|---|---|
 | OTel Collector | 4317 | OTLP/gRPC ingest |
 | OTel Collector | 4318 | OTLP/HTTP ingest |
-| OTel Collector | 8889 | Prometheus metrics scrape |
-| Tempo | 3200 | HTTP API (Grafana datasource) |
+| OTel Collector | 8888 | Collector self-telemetry (Prometheus scrape) |
+| OTel Collector | 8889 | Forwarded app metrics (Prometheus scrape) |
+| Tempo | 3200 | HTTP API (Grafana datasource) + self-metrics |
 | Loki | 3100 | HTTP API |
 | Prometheus | 9090 | UI + query API |
-| Grafana | 3000 | UI |
+| Grafana | 3300 | UI |
 
 ---
 
