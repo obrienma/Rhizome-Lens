@@ -1,4 +1,11 @@
-# Learning Log
+# Learning Log — DEPRECATED
+
+> **This log is deprecated. Do not add new entries here.**
+>
+> Engineering notes now live in [`docs/journal.md`](docs/journal.md) (typed,
+> vocabulary-enforced entries) with paired Anki cards in `docs/probes/`,
+> generated via the `journal-anki` skill. All entries below were migrated to
+> the journal on 2026-06-16 and are kept only as historical reference.
 
 ---
 
