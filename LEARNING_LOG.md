@@ -306,3 +306,67 @@ Rather than leave a permanently-empty "deliver rate" line (or invent a channel-l
 
 **Added the `events_failed_total` Prometheus panel now that the counter is real (supersedes the earlier deferral)**
 The prior step deferred this counter "until an alert needs it." EventHorizon's Phase 18 shipped it anyway as an always-on dead-letter-path counter, so the deferral is moot — added an "Async Failure Rate" timeseries (`sum(rate(events_failed_total[1m])) by (event_type)`) beside the TraceQL detail table. The Prometheus panel carries the alertable rate; the TraceQL table carries the per-failure forensics. This is the intended end state of the plan's "Prometheus for alerts, spans for detail" split.
+
+---
+
+## Docs reconciliation — README roadmap + cross-service plan sync
+
+Added a Status & roadmap section to the README and reconciled this repo's copy of the migration plan against the master copy in EventHorizon. No code changed; the value was in getting the *recorded* status to match reality across four repos.
+
+### Patterns
+
+**Per-service completion state lives in each service's own repo, not centrally**
+Q: This is the shared observability repo. To report which services are instrumented, why is reading this repo's own `.observability/` directory the wrong move?
+A: Because each phase's completion marker (`phase-N-complete`) is committed to *that phase's service repo*, by design — the plan says "write `.observability/phase-N-complete` in the repo you just finished." This repo only holds `phase-0-complete` (its own phase). Inferring status from the central repo undercounted: it showed Synapse (Phase 1) and Sentinel (Phase 2) as "not started" when both had markers + shipped code in `synapse-l4/` and `sentinel-l7/`. To report cross-service status, enumerate the *other* repos' markers (`ls ~/dev/*/.observability/`), don't read the hub.
+
+**Verify a status claim against the artifact, not against the most convenient nearby file**
+Q: What concretely flipped Synapse and Sentinel from ⬜ to ✅ in the roadmap?
+A: Reading the actual evidence: the `phase-1-complete` / `phase-2-complete` markers, the `traceparent` injection in `synapse-l4/src/clients/sentinel.py`, the `TraceContextExtractor` + spans in Sentinel, commit `2af565f`, and 45/44 passing tests recorded in the marker text. Each "done" box maps to an inspected artifact, not to an assumption.
+
+**Separate the deliverable axes that a single "done" silently conflates**
+Q: Marking Sentinel "✅ done" was technically true per the plan yet misleading. Why, and what was the fix?
+A: "Done" meant the *instrumentation* Definition of Done (cross-service trace live in Tempo) — but a reader reasonably reads "done" as "there's a dashboard," the most visible piece, which Sentinel lacks (dashboards are Phase 5). The fix was to split the roadmap table into two independent columns — **Instrumentation** and **Dashboard** — so a fully-instrumented-but-undashboarded service is legible at a glance, and to state the definition of "done" explicitly above the table.
+
+### Anti-Patterns Avoided
+
+**Blind-copying the master plan and reintroducing a resolved item**
+Q: EventHorizon holds the most-updated plan (a strict superset with as-built notes for Phases 0–3). Why not just `cp` it over this repo's copy and stop?
+A: Because the master copy described a "Cross-repo open item (belongs in rhizome-observability): the Prometheus scrape job for `rabbitmq_prometheus` is the one remaining step" — which *this* repo had already shipped (the `rabbitmq` job is in `prometheus.yml`, host-gateway, `/metrics/per-object`). A blind copy would have re-opened a closed item. Reconciliation ≠ overwrite: adopt the superset, then patch the spots where the destination repo has moved past the source's knowledge. Diffed the two copies first (`diff`) to see exactly which regions differed before deciding what to keep.
+
+### Challenges
+
+**The "is Sentinel actually done?" question couldn't be answered from inside this repo**
+The EventHorizon master plan asserted Phase 2 complete with very specific as-built notes (ADR-0024, SDK 1.14.0, 45 tests). Plausible, but asserting it in this repo's README on the strength of another repo's doc would be repeating a claim, not verifying it. Resolved by checking `sentinel-l7/.observability/` directly — the `phase-2-complete` marker (dated Jun 6) was there, so the claim held.
+
+Q: A doc in repo A says a phase in repo B is complete. Before propagating that into repo C's README, what's the minimum check?
+A: Look at repo B's own completion marker / code, not just repo A's claim about it. Docs about other repos are second-hand until the artifact is confirmed.
+
+### Decisions
+
+**Adopted the architecture-doc signal-flow diagram as the README's top diagram**
+The README's original diagram showed a generic "Services (future phases)" box; the architecture doc's version names all four source services (synapse-l4, sentinel-l7, EventHorizon, invoicer) feeding the collector. Replaced the README's with the named-service version — the four-language story is the headline, and the diagram should show it. The collector-port detail it dropped (`:8889` forwarding) is still covered in the Port reference table.
+
+**Reconciled by adopting EventHorizon's plan as canonical, then patching one stale cross-repo item**
+EventHorizon's copy is the working master (it accreted as-built notes phase by phase). This repo's `docs/` copy is a downstream mirror. Decision: bring the mirror in line with the master wholesale, with a single edit flipping the RabbitMQ-scrape "open item" to "resolved here" — because that's the one fact this repo owns more authoritatively than EventHorizon does.
+
+### Challenges (cont.) — the roadmap prose drifted out of sync with its own table, and a dashboard claimed a signal it never received
+
+Two accuracy bugs surfaced after the roadmap table was edited but the surrounding prose wasn't.
+
+**The intro text contradicted the table it introduced.** The "Status & roadmap" lead-in still read "the backend (Phase 0) is done; the per-service instrumentation lands one repo at a time" — written when nothing else was done — while the table directly below now marked Phases 1–3 instrumentation ✅. Editing a status table is only half the job; the narrative framing around it encodes a point-in-time assumption that silently goes stale. Lesson: when you flip a status cell, re-read the prose within a screen of it for tense/framing that assumed the old state.
+
+Q: You update a status table to mark several rows done. What's the easy-to-miss follow-up?
+A: The prose around the table. Intro sentences and sequencing notes often say "X is the upcoming work" — true when written, false once X ships. They don't error or fail a test; they just quietly contradict the table.
+
+**A dashboard panel existed, so the docs claimed the signal — but nothing fed it.** The EventHorizon dashboard JSON has a "Recent Logs" panel querying `{service_name="event-horizon"}` against Loki, and the README's dashboard table listed "trace-correlated logs" as a feature. But EventHorizon ships **no** logs to Loki: `grep -rli "exporter-logs-otlp\|LoggerProvider" EventHorizon/src` → nothing; the phase-3 marker explicitly kept `console.*` and deferred pino. The panel is wired-but-empty — it renders "No data" forever until Phase 5 log export lands. A provisioned panel is a *claim about intent*, not evidence the signal flows. Same trap as the earlier "don't assume a metric name exists" anti-pattern, one level up: don't assume a panel has data just because it's on the board.
+
+Q: A dashboard has a logs panel and the datasource is configured. Is it safe to document "trace-correlated logs" as a working feature?
+A: No — verify something actually *emits* those logs into the datasource. A panel + a datasource proves the query is wired, not that any series exists. Check the producing side (`grep` the service for a logs exporter / SDK logs pipeline), or query the datasource directly, before describing it as live.
+
+### Decisions (cont.)
+
+**Documented the empty Loki panels as a stated caveat rather than deleting them**
+The "Recent Logs" panels (OTel Overview + EventHorizon) feed from Loki, which no service writes to yet. Options were: remove the panels, or keep them and disclose. Kept them with an explicit "wired but empty — log export is Phase 5, 'No data' is expected" note next to the dashboard table, and softened the feature description from "trace-correlated logs" to "a *Recent Logs* panel (Loki)." Rationale: the panels are correct scaffolding for Phase 5 and removing/re-adding them is churn; the honest fix is to label the gap, not hide it. Mirrors the existing RabbitMQ "empty panels in that window are expected" note — same disclose-the-gap posture.
+
+**Named the early dashboards as pulled-ahead in the prose**
+Rather than let the table's two ✅ dashboard cells (Phase 0, Phase 3) silently contradict "dashboards are Phase 5," the intro now says both were *pulled forward ahead of Phase 5*, EventHorizon's built out of order alongside its instrumentation. Keeps the "instrumentation ≠ dashboard, dashboards lag" model intact while accounting for the two that landed early.

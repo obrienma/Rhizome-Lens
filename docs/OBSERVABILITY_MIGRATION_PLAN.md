@@ -1,7 +1,7 @@
 # OTel Observability Migration — Cross-Service Plan
 
 **Audience:** implementation agent (Claude Code or similar)
-**Drop location:** copy this file to the root of each of the four repos as `OBSERVABILITY_MIGRATION_PLAN.md`
+**Drop location:** copy this file to the root of each of the four repos as `.observability/OBSERVABILITY_MIGRATION_PLAN.md`
 **Source of truth:** this plan is ordered across four repos. The phase you can work on depends on which repo you are in AND which prior phases are complete. **Do not skip ahead. Pause checkpoints are mandatory.**
 
 ---
@@ -15,7 +15,7 @@ Unified observability across four services using OpenTelemetry as the signal lay
 1. `sentinel-l7` (Laravel/PHP) — compliance engine, consumes axioms from Redis Streams
 2. `EventHorizon` (TypeScript/Fastify) — four-stage telemetry pipeline over RabbitMQ + MongoDB
 3. `synapse-l4` (Python/FastAPI) — LLM validation sidecar, emits to Sentinel via Redis Streams
-4. `ruby-invoicer` (Ruby, name TBC) — invoicing against Sentinel customers
+4. `Ledger-L5` (Ruby/Rails) — invoicing against Sentinel customers (`~/dev/Ledger-L5`)
 
 ## Architecture target
 
@@ -23,7 +23,7 @@ Unified observability across four services using OpenTelemetry as the signal lay
 [synapse-l4] ──┐
 [sentinel-l7] ─┼─ OTLP → [otel-collector] ─┬→ Tempo  (traces)
 [EventHorizon]─┤                            ├→ Loki   (logs)
-[invoicer]   ──┘                            └→ Prometheus (metrics)
+[Ledger-L5]  ──┘                            └→ Prometheus (metrics)
                                               ↓
                                           [Grafana]
 ```
@@ -89,6 +89,8 @@ For each phase below:
 
 **PAUSE CHECKPOINT 0:** Stack must be running and a synthetic trace must be visible in Grafana before Phase 1 begins. Commit `.observability/phase-0-complete`.
 
+**STATUS: ✓ Complete** — stack running at `~/dev/rhizome-observability`. Synthetic trace verified in Tempo. Marker: `.observability/phase-0-complete`.
+
 ---
 
 ## Phase 1 — Synapse-L4 (Python/FastAPI)
@@ -127,7 +129,17 @@ For each phase below:
 - Logfire+OTel interop: high confidence Logfire SDK respects `OTEL_EXPORTER_OTLP_ENDPOINT`, but verify against current Pydantic Logfire docs before committing the config.
 - The exact path of the Redis client in this repo: pattern-matched from memory, verify before editing.
 
+**As-built notes (Phase 1 complete):**
+
+- `OTEL_EXPORTER_OTLP_ENDPOINT` is read by Pydantic Settings into `config.otel_exporter_otlp_endpoint`; the `/v1/traces` path is appended in `instrumentation.py` when constructing `OTLPSpanExporter`.
+- Logfire v3 `configure()` accepts `additional_span_processors: list[SpanProcessor]` — this is the dual-export mechanism. Logfire is retained as an optional secondary backend.
+- **`service_name` must be passed explicitly** to `logfire.configure(service_name="synapse-l4")`. Without it Tempo shows `unknown_service`. The `OTEL_SERVICE_NAME` env var also works but is less reliable than the explicit parameter. This will bite every subsequent service — see note in Phase 2 confidence flags.
+- `traceparent` is injected only when `inject(carrier)` produces a non-empty carrier (i.e. when there is an active span). No active span → no field written → Sentinel-L7 must handle the absent key gracefully.
+- Actual `traceparent` format confirmed on stream: `00-<32-hex-trace-id>-<16-hex-span-id>-01`.
+
 **PAUSE CHECKPOINT 1:** Synapse traces visible in Tempo; `traceparent` confirmed on stream entries. Commit `.observability/phase-1-complete`. **Pause before starting Phase 2.**
+
+**STATUS: ✓ Complete** — traces visible in Tempo under service `synapse-l4`; `traceparent` field confirmed on `synapse:axioms` stream entries. Marker: `.observability/phase-1-complete`.
 
 ---
 
@@ -170,12 +182,26 @@ For each phase below:
 
 **Confidence flags:**
 
+- **`service.name` must be set explicitly** — without it Tempo shows `unknown_service`. In PHP, set `OTEL_SERVICE_NAME=sentinel-l7` as an env var before the SDK bootstraps, or pass it in the SDK configuration. This burned time in Phase 1 (Python); don't repeat it here.
 - PHP OTel auto-instrumentation packages are less mature than Python/Node equivalents. The `auto-laravel` package may require manual span wiring for Redis (predis is not always auto-instrumented). Budget extra time here.
 - The PHP SDK requires the OTel PECL extension OR runs in pure PHP mode — verify Render's PHP image supports the chosen path.
 
 **ADR consideration:** This introduces a new cross-cutting concern. Worth a short ADR documenting "trace context is transport-layer, not domain-layer" — i.e. why traceparent doesn't land in `ComplianceEvent`.
 
+**As-built notes (Phase 2 complete):**
+
+- `open-telemetry/sdk` 1.14.0 + `open-telemetry/exporter-otlp` 1.4.0 installed. Pure PHP mode — no PECL extension required.
+- `OtelServiceProvider` bootstraps `TracerProvider` with `BatchSpanProcessor` → `OtlpHttpTransportFactory` (protobuf, port 4318). Registered in `bootstrap/providers.php`.
+- `TraceContextExtractor` in `app/Services/Compliance/` wraps `TraceContextPropagator::getInstance()->extract()`. Empty carrier when `$traceparent` is null → new root span (graceful absent-key handling).
+- `AxiomProcessorService` takes `?TracerProviderInterface $tracerProvider = null` as an optional constructor param. Defaults to `Globals::tracerProvider()` → `NoopTracerProvider` in tests. Laravel DI injects the real provider in production.
+- `TraceContextExtractor $extractor = new TraceContextExtractor()` uses PHP 8.1+ "new in initializers" — existing unit tests that do `new AxiomProcessorService($driver)` continue working unchanged.
+- Three spans emitted per AI-routed Axiom: `axiom.process` (root/child), `axiom.ai_analysis` (child), and implicitly the HTTP span to Gemini/OpenRouter (auto-instrumented if HTTP auto-instrumentation is added later).
+- `BatchSpanProcessor` chosen over `SimpleSpanProcessor` — avoids per-span blocking in the worker loop. Trade-off: spans lost on unclean shutdown without explicit `$provider->shutdown()`. Acceptable for dev; PCNTL signal handler deferred.
+- ADR-0024 documents the transport-layer isolation decision.
+
 **PAUSE CHECKPOINT 2:** End-to-end Synapse → Sentinel trace must be visible. Commit `.observability/phase-2-complete`. **Pause before starting Phase 3.**
+
+**STATUS: ✓ Complete** — SDK bootstrapped; `axiom.process`, `axiom.ai_analysis`, `axiom.sub_threshold` spans instrumented; `traceparent` extracted from stream entries. 45 tests pass. Marker: `.observability/phase-2-complete`.
 
 ---
 
@@ -194,20 +220,15 @@ For each phase below:
 **Tasks:**
 
 1. Install OTel:
-   - `npm i @opentelemetry/sdk-node @opentelemetry/auto-instrumentations-node @opentelemetry/exporter-trace-otlp-http @opentelemetry/exporter-logs-otlp-http`
-2. Create `src/observation/tracing.ts` that initializes the Node SDK before any other imports. Wire into `src/index.ts` as the **first** import.
+   - `npm i @opentelemetry/sdk-node @opentelemetry/auto-instrumentations-node @opentelemetry/exporter-trace-otlp-http @opentelemetry/api @opentelemetry/semantic-conventions`
+2. Create `src/observation/tracing.ts` that initializes the Node SDK before any other imports. Wire into both entry points (`src/server.ts` and `src/processing/worker.ts`) as the **first** import.
 3. Auto-instrumentation will cover Fastify, http, amqplib, MongoDB out of the box. Verify each shows up.
 4. For RabbitMQ propagation:
-   - On publish (ingest → process boundary): inject the current context into message `properties.headers`:
-     ```typescript
-     const headers: Record<string, string> = {};
-     propagation.inject(context.active(), headers);
-     channel.publish(exchange, routingKey, content, { headers });
-     ```
-   - On consume (worker side): extract context from `msg.properties.headers` and run the handler within that context.
+   - On publish (ingest → process boundary): inject the current context into message `properties.headers` in `queue.ts::publishEvent()`.
+   - On consume (worker side): extract context from `msg.properties.headers` in `worker.ts` and run the handler within that context using `context.with()`.
 5. Replace `console.*` calls with the OTel logs API OR with a structured logger (pino) configured to export via OTLP. Recommend pino + `@opentelemetry/instrumentation-pino` for least churn.
 6. The current silent-drop on malformed messages (known issue) should become a span event with `exception.type` and `exception.message` plus the raw message attributes attached. The drop is now a queryable span, not just a counter — you can ask "show me all dropped messages from the last hour grouped by exception.type" via TraceQL. Keep one Prometheus counter (`dropped_messages_total`) for alerting purposes only; everything else is on spans.
-7. Each of the four pipeline stages emits a **wide** span: ingest span carries `http.route`, `payload.size_bytes`, `tenant_id`; process span carries `processor.name`, `payload.type`, `enrichment.applied`; store span carries `mongo.collection`, `doc.size_bytes`, `write.duration_ms`; observe span carries `subscribers.count`, `fanout.duration_ms`. Replace the in-memory counters in `metrics.ts` with span attributes wherever possible — only keep Prometheus counters for things that need to drive alerts (queue depth, drop rate).
+7. Each of the four pipeline stages emits a **wide** span: ingest span carries `http.route`, `payload.size_bytes`, `event.id`, `event.type`, `event.source`; process span carries `event.id`, `event.type`, `classification`, `classification.tags`, `retry.count`, `msg.routing_key`, `write.collection`; observe span carries `event.id`, `event.type`, `subscribers.count`, `fanout.duration_ms`, `changeStream.lag_ms`. Replace the in-memory counters in `metrics.ts` with span attributes wherever possible — only keep Prometheus counters for things that need to drive alerts (queue depth, drop rate).
 
 **Definition of done:**
 
@@ -217,16 +238,45 @@ For each phase below:
 
 **Confidence flags:**
 
-- Node SDK initialization order is finicky. The `tracing.ts` import MUST come before any instrumented module is imported — this often requires a `-r ./dist/observation/tracing.js` flag at process start rather than a top-of-file import.
-- amqplib auto-instrumentation injects context via headers by default in recent versions but check the version pinned in this repo.
+- **ESM entry-point ordering**: There are two separate process entry points (`src/server.ts` and `src/processing/worker.ts`). Both must import `./observation/tracing.js` (or `../observation/tracing.js`) as their **first** import. The plan originally referenced a `-r` flag or `src/index.ts` — neither applies here. With tsx + Node ESM, adding the tracing import first in each entry file ensures the SDK initializes before any instrumented module is evaluated (ESM evaluates imports depth-first, left-to-right).
+- **amqplib header filtering**: amqplib encodes non-string header values (e.g. `x-retry-count`) as Buffer objects. When extracting the OTel carrier from `msg.properties.headers`, filter to string-valued keys only — otherwise `propagation.extract()` receives unexpected types.
+- **`OTEL_SERVICE_NAME`**: Must be set explicitly. Without it Tempo shows `unknown_service`. Set via env var or hardcode in `tracing.ts`.
+
+**As-built notes (Phase 3 complete):**
+
+- `@opentelemetry/sdk-node` 0.218.0 + `@opentelemetry/auto-instrumentations-node` 0.76.0 + `@opentelemetry/exporter-trace-otlp-http` 0.218.0 installed.
+- `src/observation/tracing.ts` — `NodeSDK` + `OTLPTraceExporter` + `getNodeAutoInstrumentations()` (fs instrumentation disabled — too noisy). `OTEL_SERVICE_NAME` defaults to `"event-horizon"`.
+- **First import** pattern: `import "./observation/tracing.js"` added as line 1 in `src/server.ts`; `import "../observation/tracing.js"` as line 1 in `src/processing/worker.ts`. ESM evaluation order guarantees the SDK initializes first.
+- **RabbitMQ inject** (`queue.ts::publishEvent`): `propagation.inject(context.active(), headers)` called before `channel.publish()`. The populated `headers` object is passed as part of publish options.
+- **RabbitMQ extract** (`worker.ts` consume handler): `msgHeaders` filtered to `Record<string, string>` before passing to `propagation.extract()`. Worker span started as `SpanKind.CONSUMER` with `parentCtx`. Entire handler body runs inside `context.with(trace.setSpan(parentCtx, span), ...)`.
+- **Parse-failure span events**: `SyntaxError` (bad JSON) and `ZodError` (schema mismatch) caught in the worker's error path. `span.addEvent("message.parse_failed", {...})` surfaces the exception type, message, routing key, message size, and retry count — all queryable via TraceQL.
+- **Wide process span attributes**: `event.id`, `event.type`, `event.source`, `event.timestamp`, `classification`, `classification.tags`, `retry.count`, `msg.routing_key`, `write.collection`.
+- **Observe span** (`server.ts` `onInsert` callback): `event.observe` span wraps `recordInsert()` + `broadcast()`. Attributes: `event.id`, `event.type`, `subscribers.count` (via new `getConnectionCount()` export from `wsServer.ts`), `fanout.duration_ms`, `changeStream.lag_ms`.
+- **Ingest span widen** (`event.routes.ts`): `trace.getActiveSpan()` used to add `event.id`, `event.type`, `event.source`, `payload.size_bytes` to the Fastify auto-instrumented HTTP span. Validation failures add a `validation.failed` span event.
+- `getConnectionCount()` added to `wsServer.ts` — returns `clients.size`.
+- `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME` added to `.env.example`.
+- 44 tests pass unchanged — OTel SDK in tests uses `NoopTracerProvider` (no collector needed).
+- Console.* logging retained — pino migration deferred (Phase 5 scope).
 
 **PAUSE CHECKPOINT 3:** Four-stage EventHorizon trace visible; malformed-message drops now produce observable signals. Commit `.observability/phase-3-complete`. **Pause before starting Phase 4.**
 
+**STATUS: ✓ Complete** — SDK bootstrapped; RabbitMQ context propagation wired; wide spans on all four pipeline stages; parse-failure span events surfaced. 44 tests pass. Marker: `.observability/phase-3-complete`.
+
+**Post-completion extensions (EventHorizon project phases 16–19, 2026-06-14 → 06-15):**
+
+Phase 3's exit criteria (four-stage trace, span-event drops) were met with the NoopTracerProvider and no live backend. The following work hardened that against the real `rhizome-observability` stack and added the pipeline-internal signals the trace layer can't carry. These are EventHorizon-local follow-ups — they do **not** change the cross-service sequencing and Phase 4 (invoicer) remains the next plan phase.
+
+- **P16 — Live validation + bugfix + first dashboard.** Ran the full OTel pipeline against the live stack (Tempo/Loki/Prometheus/Grafana). Fixed a `Buffer.byteLength` bug in `event.routes.ts` that the `app.inject()` tests had masked via optional-chaining short-circuit (`a9e2e4a`). Built the "EventHorizon Service" Grafana dashboard (RED metrics + Node.js runtime health) **entirely from existing auto-instrumentation** — no new instrumentation code. This is the EventHorizon slice of Phase 5 landing early (see Phase 5 note).
+- **P17 — Fault injection for demo traffic.** Opt-in, both default 0 and off unless set: `CHAOS_ERROR_RATE` (server, `config.ts`/`event.routes.ts`) throws *after* validation to produce real 500s; `--error-rate` (seed producer) sends a malformed `id` to trigger real 422s. Live-verified mixed 202/422/500 in Tempo and Prometheus; added a "Recent Traces" TraceQL table panel to the dashboard.
+- **P18 — Custom metric instruments for pipeline-internal signals.** Three signals the RED/auto-instrumentation dashboard cannot see were exported via the env-configured `MeterProvider` (no new wiring in `tracing.ts`): `events.processed` Counter → `events_processed_total{event_type="pipeline|sensor|app"}` (worker ack path); `events.failed` Counter → `events_failed_total{event_type, failure_reason="parse_error|schema_error|processing_error"}` (worker retry-exhaustion path — the async-failure signal the HTTP 5xx panel can't see, and the *processing-failure subset* of dead-letters, not the total); and `eventhorizon.change_stream.lag` ObservableGauge → `eventhorizon_change_stream_lag_milliseconds`. `queueDepth` is **deliberately not** exported from EventHorizon — it comes from RabbitMQ's own `rabbitmq_prometheus` exporter so the broker stays the single source of truth. Governed by **ADR 0016 → ADR 0017** (see the refined anti-goal below). Live-verified: 25/35/36 processed-by-type split, lag gauge 0ms.
+
+**Cross-repo item (resolved in `rhizome-observability`):** EventHorizon's `docker-compose.yml` publishes RabbitMQ's Prometheus port `15692` on the host (`cc05a81`). The matching **Prometheus scrape job for `rabbitmq_prometheus`** is now shipped here — see the `rabbitmq` job in `prometheus.yml` (scraping `host.docker.internal:15692` at `/metrics/per-object` via host-gateway, required on Linux/WSL2). Grafana can read `rabbitmq_queue_messages{queue="events.dead"}` (the total dead-letter signal that complements `events_failed_total`) and queue depth. EventHorizon's own custom metrics already reach Prometheus via the OTLP collector — no extra scrape job needed for those.
+
 ---
 
-## Phase 4 — Ruby invoicer
+## Phase 4 — Ledger-L5 (Ruby invoicer)
 
-**Repo:** TBC (likely `cyber-rhizome/invoicer` or similar)
+**Repo:** `Ledger-L5` (`~/dev/Ledger-L5`, Ruby/Rails)
 
 **Goal:** Invoicer is instrumented from day one. Any HTTP calls to Sentinel automatically propagate trace context, linking invoicing flows back to the underlying compliance events they bill against.
 
@@ -239,7 +289,7 @@ For each phase below:
 2. Configure in an initializer:
    ```ruby
    OpenTelemetry::SDK.configure do |c|
-     c.service_name = 'invoicer'
+     c.service_name = 'ledger-l5'
      c.use_all  # auto-instrument everything available
    end
    ```
@@ -249,7 +299,7 @@ For each phase below:
 **Definition of done:**
 
 - Generating a test invoice that queries Sentinel produces a trace spanning both services in Tempo.
-- The trace shows Ruby spans (invoicer.invoice.generate) → HTTP call → Sentinel spans (the existing compliance query handler).
+- The trace shows Ruby spans (ledger-l5 `invoice.generate`) → HTTP call → Sentinel spans (the existing compliance query handler).
 
 **Confidence flags:**
 
@@ -265,7 +315,7 @@ For each phase below:
 
 This phase is decorative compared to traces. The interview talking point is "distributed tracing across async boundaries in four languages" — that lives entirely in phases 0–4. Defer this phase until you have a concrete need (e.g. dashboard screenshots for portfolio site).
 
-> **Early slices already shipped (Phase 0).** The `EventHorizon Service` dashboard was built ahead of this phase (see Phase 0 learning-log entries) and later extended with two operational panels whose need arrived during live validation: a **RabbitMQ Queue Health** panel (queue/DLQ depth vs publish-vs-deliver rate — the queue-backlog signal, scraped via `rabbitmq_prometheus` across the compose-project boundary) and an **Async Failures** TraceQL table that surfaces the post-`202` worker/DLQ failures the HTTP 5xx panel structurally cannot see. Both honour this phase's discipline: queue depth and drop rate are alerting signals (Prometheus), while the per-failure detail stays on spans (TraceQL). EventHorizon's Phase 18 later shipped the `events_failed_total{event_type}` counter on the worker dead-letter path, so the async-failure story now spans both a Prometheus "Async Failure Rate" panel (alertable) and the TraceQL detail table — the counter for the rate, the spans for the forensics.
+**Partial early landing (EventHorizon):** the EventHorizon dashboard slice of this phase is already built — the "EventHorizon Service" Grafana dashboard (RED + Node.js runtime + a "Recent Traces" TraceQL panel + per-type throughput and change-stream-lag panels off the Phase-18 custom metrics). Pulling it forward was justified by the live-validation and fault-injection demo need (project phases 16–18); it does not unblock or reorder the remaining services. Logs-via-Loki and the other three services' dashboards remain deferred.
 
 When ready:
 
@@ -298,6 +348,7 @@ A portfolio-level architecture diagram showing the full system with trace flow a
 - Do not expand OTel instrumentation to cover every function — auto-instrumentation plus manual spans on business-critical operations is the right granularity. Adding spans for trivial helpers creates noise.
 - Do not silently replace Logfire with raw OTel in Synapse. Logfire IS OTel; keep it as an exporter option.
 - **Do not pre-aggregate business attributes into Prometheus counters.** `axioms_by_domain_total{domain="..."}`, `invoice_amount_by_customer_total{customer_id="..."}` — these belong as wide span attributes queryable via TraceQL, not as pre-committed metric dimensions. Prometheus counters are reserved for things that drive alerts (rates, error counts, queue depth). The discipline matters because once a Prometheus counter exists, people start querying it instead of the spans, and the wide-attribute story degrades over time.
+  - **Documented exception (EventHorizon, ADR 0016 → 0017):** `events_processed_total{event_type}` and `events_failed_total{event_type, failure_reason}` *are* sanctioned counters. They pass the refined test, not break the rule: `event.type` is a **closed three-value enum** (no cardinality commitment at write time), and they are **rate/SLO signals that must be sampling-independent** — a throughput rate or failure rate cannot be reconstructed from sampled traces. The discipline still binds open-ended dimensions (`source`, `id`, `customer_id`, `domain`): those stay span-only. Before adding any pipeline counter, apply the ADR-0017 test — *alert/SLO + sampling-independent + bounded label set → instrument; otherwise → span attribute.*
 
 ---
 
