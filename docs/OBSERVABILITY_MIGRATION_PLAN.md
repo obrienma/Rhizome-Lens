@@ -317,6 +317,30 @@ This phase is decorative compared to traces. The interview talking point is "dis
 
 **Partial early landing (EventHorizon):** the EventHorizon dashboard slice of this phase is already built — the "EventHorizon Service" Grafana dashboard (RED + Node.js runtime + a "Recent Traces" TraceQL panel + per-type throughput and change-stream-lag panels off the Phase-18 custom metrics). Pulling it forward was justified by the live-validation and fault-injection demo need (project phases 16–18); it does not unblock or reorder the remaining services. Logs-via-Loki and the other three services' dashboards remain deferred.
 
+**Partial early landing (Sentinel-L7), 2026-06-16:** the "Sentinel-L7 Service" Grafana dashboard (`grafana/provisioning/dashboards/sentinel-l7-service.json`) is built and live-verified. Unlike EventHorizon (PromQL off Node auto-instrumentation), **every panel is a TraceQL query over the wide `axiom.process` / `axiom.ai_analysis` span attributes** — no pre-aggregated Prometheus counters, the canonical posture for this section. 9 panels: throughput by `risk_level` / `domain` / `routed_to_ai` (`rate()`), processing latency p50/p95/p99 (`quantile_over_time(duration, …)`), anomaly-score and AI-confidence avg/max (see attribute-quantile note below), AI-by-driver, plus AI-error and recent-Axiom trace tables. Logs-via-Loki for Sentinel remains deferred (Sentinel still logs via Monolog, not OTLP→Loki).
+
+**As-built notes (Sentinel-L7 dashboard):**
+
+- **Tempo bumped 2.6.1 → 2.7.2.** Needed because `avg/min/max_over_time` over span *attributes* 500'd on 2.6.1 ("unexpected IDENTIFIER"); they work on 2.7.2.
+- **`metrics_generator` enabled with the `local-blocks` processor** (`tempo.yaml`), queried directly via the Tempo datasource — no Prometheus `remote_write`. Required `overrides.defaults.metrics_generator.processors: [local-blocks]`.
+- **`filter_server_spans: false` is mandatory.** Tempo 2.7's `local_blocks` defaults this to `true`, which silently drops all non-`SERVER` spans from metrics. Sentinel's `axiom.process` / `axiom.ai_analysis` spans are `SpanKind=INTERNAL`, so without this the generator received spans but produced zero metric series (search worked, all metrics queries returned empty).
+- **TraceQL `quantile_over_time` / `histogram_over_time` only work over the `duration` intrinsic, not arbitrary numeric attributes — even on 2.7.2.** So true percentiles exist only for latency (P3, off span `duration`). `.anomaly_score` and `.ai.confidence` distribution panels use `avg`/`max`/`min_over_time` instead. (Migration path to real attribute percentiles: a later Tempo, or a histogram metric.)
+- **Span-duration metrics return values in seconds** — the latency panel unit is `s`, not `ms`.
+- **`recordException` does not set span status to error.** `AxiomProcessorService::routeToAi()` calls `recordException()` on a driver failure, which emits an `exception` span *event* but leaves status unset (`span.error` is never true). So the "AI Errors" panel filters on `event:name = "exception"`, not `status=error`.
+- Editing a bind-mounted config then `docker compose restart`-ing fails on Docker Desktop + WSL2 (stale mount); use `docker compose up -d --force-recreate <svc>`.
+
+**Enabling the AI panels (P6 "AI Analysis by Driver", P7 "AI Confidence") later — required steps:**
+
+The `axiom.ai_analysis` success-path attributes (`ai.driver`, `ai.confidence`) are only set when `ComplianceDriver::analyze()` returns *without* throwing. In dev the call throws (placeholder API key), so those attributes are absent and the failures surface in the P8 exception-events table instead. To populate P6/P7:
+
+1. **Provide a working AI credential for the active driver** (`SENTINEL_AI_DRIVER` in Sentinel's env):
+   - `openrouter` → real `OPENROUTER_API_KEY` (+ `OPENROUTER_MODEL`)
+   - `gemini` → real `GEMINI_API_KEY` (+ `GEMINI_FLASH_URL`)
+2. **Send Axioms with `anomaly_score > AXIOM_AUDIT_THRESHOLD` (default 0.8)** so they route to `routeToAi()`. Sub-threshold Axioms never emit `axiom.ai_analysis` attributes.
+3. **Worker running** (`php artisan sentinel:watch-axioms`) exporting to the collector, with the Tempo metrics-generator live.
+
+Once a driver call succeeds, P6 shows throughput split by `ai.driver` and P7 shows avg/min `ai.confidence`. No dashboard change is needed — the queries are already correct.
+
 When ready:
 
 - Ship logs via OTel Collector → Loki from each service (most SDKs support this in the same OTLP exporter).

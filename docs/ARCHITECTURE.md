@@ -12,19 +12,19 @@
 [synapse-l4  (Python/FastAPI)]  ──┐
 [sentinel-l7 (Laravel/PHP)   ]  ──┤  OTLP/gRPC :4317
 [EventHorizon (TS/Fastify)   ]  ──┤  OTLP/HTTP :4318
-[invoicer    (Ruby)          ]  ──┘
+[ledger-l5    (Ruby)         ]  ──┘
                                     │
-                           ┌────────▼─────────┐
+                           ┌────────▼──────────┐
                            │  otel-collector   │
                            │  (fan-out hub)    │
-                           └──┬──────┬─────┬──┘
+                           └──┬──────┬─────┬───┘
                               │      │     │
                            traces  logs  metrics
                               │      │     │
-                      ┌───────▼┐  ┌──▼┐ ┌─▼──────────┐
-                      │ Tempo  │  │Loki│ │ Prometheus  │
-                      │ :3200  │  │:3100│ │  :9090      │
-                      └───┬────┘  └──┬─┘ └─┬───────────┘
+                      ┌───────▼┐  ┌──▼──┐ ┌▼───────────┐
+                      │ Tempo  │  │Loki │ │ Prometheus │
+                      │ :3200  │  │:3100│ │  :9090     │
+                      └───┬────┘  └──┬──┘ └─┬──────────┘
                           │          │      │
                           └──────────▼──────┘
                                      │

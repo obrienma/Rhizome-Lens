@@ -18,6 +18,30 @@ compactor:
   compaction:
     block_retention: 1h
 
+# TraceQL metrics (rate(), quantile_over_time, histogram_over_time) require the
+# local-blocks processor. It keeps recent traces in its own block store and the
+# query-frontend reads them directly — no Prometheus remote_write needed, so the
+# Sentinel-L7 dashboard queries metrics straight from the Tempo datasource.
+metrics_generator:
+  processor:
+    local_blocks:
+      flush_to_storage: true
+      # Our business spans (axiom.process / ai_analysis) are SpanKind=INTERNAL, not
+      # SERVER. Tempo 2.7 defaults filter_server_spans to true, which would drop
+      # them from TraceQL metrics. Keep all spans so the dashboard sees them.
+      filter_server_spans: false
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write: []
+  traces_storage:
+    path: /var/tempo/generator/traces
+
+# Turn the generator on for the (single) default tenant.
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [local-blocks]
+
 storage:
   trace:
     backend: local
