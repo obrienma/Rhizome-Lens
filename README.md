@@ -30,7 +30,7 @@ It's the shared telemetry backend for a four-service, four-language migration to
                               └─────────────┘
 ```
 > [!TIP]
-> EventHorizon telemetry with synthetic errors  — generated via opt-in fault injection for dashboard demo traffic.
+> EventHorizon telemetry with synthetic errors  — generated via fault injection for dashboard demo traffic.
 <img width="750" alt="EventHorizon-Grafana" src="https://github.com/user-attachments/assets/1955b801-848e-4aed-acb1-6f5934252ad0" />
 
 ---
