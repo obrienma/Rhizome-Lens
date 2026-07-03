@@ -424,3 +424,58 @@ service writes to yet. Kept them with an explicit "wired but empty — log expor
 is Phase 5, 'No data' expected" note and softened the feature description, rather
 than removing and re-adding them later. Mirrors the existing RabbitMQ
 "empty-in-this-window is expected" disclosure — same disclose-the-gap posture.
+
+---
+
+## Phase 0 (cont.) — sentinel-eval joins the traced services (via cross-repo mirror) — 2026-07-03
+Files: sentinel-eval/src/sentinel_eval/observability/, sentinel-eval/src/sentinel_eval/online/pipeline.py, sentinel-eval/src/sentinel_eval/online/judge.py
+
+Mirrored from `sentinel-eval/docs/journal/sentinel-eval-2026-07-03T1916-otel-instrumentation.md`
+(`cross_ref_id: sentinel-eval-2026-07-03T1916-otel-instrumentation`) — that
+repo uses the newer per-entry `docs/journal/` directory format; this hub
+keeps its own flat-file convention per this repo's local
+`skills/journal-anki.md` copy, so the framing below is hub-shaped rather
+than a verbatim copy.
+
+sentinel-eval (the standalone eval harness scoring Sentinel-L7 and
+Synapse-L4 outputs) is now the fifth OTel-instrumented service in the
+suite, following the same OTLP/HTTP-to-Collector convention as the other
+four: `OTEL_EXPORTER_OTLP_ENDPOINT` (default `http://localhost:4318`) with
+`/v1/traces` and `/v1/metrics` suffixes, `OTEL_SERVICE_NAME` defaulting to
+`sentinel-eval`.
+
+### Anti-Pattern Avoided: Deferred SDK Initialization (Root-Span Fragmentation)
+Before wiring sentinel-eval's tracer, checked whether Synapse-L4's suspected
+"three traces instead of one" bug is a general Python-SDK-init-order
+problem rather than a FastAPI-only quirk — relevant to this hub because any
+future Python service in the suite would be at risk of the same bug.
+Diagnosis: `synapse-l4/main.py` constructs the FastAPI app and registers
+routes at import time, but defers `configure_logfire()` /
+`instrument_fastapi(app)` into the `lifespan()` handler, which only runs
+once Uvicorn starts serving. Starlette lazily builds and caches its ASGI
+middleware stack on the first ASGI event it receives — including the
+lifespan-startup event itself, which flows through the same top-level
+`app.__call__` before instrumentation has run. The OTel/Logfire ASGI
+middleware ends up attached after other middleware ordering has already
+latched in, producing inconsistent root-span parenting. Same discipline
+already documented for EventHorizon's Node SDK ("must come before any
+instrumented module is imported") — generalizes across languages, not
+Python-specific either, just easier to hit in a deferred-lifecycle-hook
+framework pattern. sentinel-eval's `observability/tracing.py` /
+`metrics.py` configure their providers as a plain import-time module-level
+side effect instead of behind a lifecycle hook, avoiding the same trap.
+**Not yet applied back to synapse-l4 itself** — flagged as a candidate fix
+for that repo, not made in this session (out of scope for the sentinel-eval
+task that produced this finding).
+
+### Challenge: No live verification against this hub's own Collector
+Unlike the other services' entries above, sentinel-eval's OTLP wiring was
+**not** verified against a running Collector in the session that produced
+it — Docker wasn't reachable from that WSL session. The instrumentation
+logic itself (span names, parent/child nesting, exception status, counter
+emission across the judge fallback chain) was verified with in-memory
+span/metric exporters in sentinel-eval's own test suite, which is a
+weaker claim than "trace confirmed visible in Tempo" for the other four
+services. Per this repo's own "verify a status claim against the artifact"
+pattern (above): treat sentinel-eval as *instrumented, not yet confirmed
+flowing* until someone runs the stack and checks Tempo/Prometheus for real.
