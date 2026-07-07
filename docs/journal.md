@@ -479,3 +479,54 @@ weaker claim than "trace confirmed visible in Tempo" for the other four
 services. Per this repo's own "verify a status claim against the artifact"
 pattern (above): treat sentinel-eval as *instrumented, not yet confirmed
 flowing* until someone runs the stack and checks Tempo/Prometheus for real.
+
+---
+
+## Phase 0 (cont.) — Sentinel-L7 MCP adapter: a reverse-engineered integration boundary — 2026-07-04
+cross-ref: observability
+cross_ref_id: sentinel-eval-2026-07-04T0819-sentinel-l7-adapter
+Files: sentinel-eval/src/sentinel_eval/adapters/sentinel_l7.py, sentinel-eval/tests/test_sentinel_l7_adapter.py, sentinel-eval/README.md
+
+Mirrored from `sentinel-eval/docs/journal/sentinel-eval-2026-07-04T0819-sentinel-l7-adapter.md`
+(`cross_ref_id: sentinel-eval-2026-07-04T0819-sentinel-l7-adapter`) — that
+repo uses the newer per-entry `docs/journal/` directory format; this hub
+keeps its own flat-file convention, so the framing below is hub-shaped
+rather than a verbatim copy. **Backfilled 2026-07-06**: this entry carried
+`cross_ref: observability` in its source frontmatter from the day it was
+written, but was never actually mirrored here until a punch-list review
+caught the gap — see this hub's own `skills/journal-anki.md` re-sync note
+for how the gap was found (a stale local skill copy, discovered while
+looking for exactly this kind of drift).
+
+Sentinel-L7 exposes no plain HTTP route for its compliance-analysis
+integration boundary — only an MCP server (`Mcp::web('/mcp',
+SentinelServer::class)`). Building sentinel-eval's adapter for it required
+reading `vendor/laravel/mcp` source directly rather than assuming the MCP
+spec in general, since Laravel's specific implementation choices aren't
+guaranteed by the spec itself.
+
+### Pattern: Verify the Wire Protocol Against the Framework's Source, Not the Spec
+Three concrete, non-obvious findings from reading `vendor/laravel/mcp`
+directly: tool names are kebab-case via `Str::kebab(class_basename(...))`
+(`AnalyzeTransaction` → `analyze-transaction`), not the snake_case the
+server's own human-readable instructions text uses; `tools/call` requires
+no prior `initialize` handshake in this implementation —
+`Server::handle()` dispatches directly to whichever method arrives, no
+session state enforced; and `Response::json($result)` double-encodes, so
+`result.content[0].text` must be JSON-decoded a second time to reach the
+real payload. Every one of these would have produced a plausible-looking
+but wrong client if assumed from the general MCP spec instead of the
+actual framework code handling requests on the other side of this
+integration boundary.
+
+### Decision: Widen the Boundary's Output Instead of Scoring a Collapsed Boolean
+The MCP tool on the other side of this boundary (`AnalyzeTransaction`)
+only exposed `{source, is_threat, message, elapsed_ms}` —
+`TransactionProcessorService::process()` computed a full `risk_level`/
+`narrative`/`confidence`/`policy_refs` grading internally but discarded
+all but a collapsed boolean before it reached this integration point.
+Widened the boundary's own output (additive-only — new keys, existing
+four untouched, backward-compatible with an already-warm production
+cache via `??` fallbacks) rather than accepting a permanent measurement
+ceiling on the sentinel-eval side of the integration. Full Sentinel-L7
+suite (312 tests) green before and after.
