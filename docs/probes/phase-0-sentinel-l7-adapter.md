@@ -1,7 +1,7 @@
 ---
 type: cloze
 deck: Rhizome::observability
-tags: [observability, sentinel-eval, mcp-jsonrpc]
+tags: [observability, arbiter-l8, mcp-jsonrpc]
 ---
 Laravel MCP tool names are derived via {{c1::Str::kebab}}(class_basename($this))
 by default — `AnalyzeTransaction` becomes the JSON-RPC tool name
@@ -14,7 +14,7 @@ See: docs/journal.md (Phase 0 cont. — Sentinel-L7 MCP adapter)
 ---
 type: cloze
 deck: Rhizome::observability
-tags: [observability, sentinel-eval, mcp-jsonrpc]
+tags: [observability, arbiter-l8, mcp-jsonrpc]
 ---
 A Laravel MCP tool's JSON-RPC result content is `Response::json($result)`,
 itself a JSON-encoded string wrapped in a text block — so
@@ -27,12 +27,12 @@ See: docs/journal.md (Phase 0 cont. — Sentinel-L7 MCP adapter)
 ---
 type: basic
 deck: Rhizome::observability
-tags: [observability, sentinel-eval]
+tags: [observability, arbiter-l8]
 ---
 Q: Why was this mirror entry backfilled on 2026-07-06 instead of when it
 was originally written on 2026-07-04?
 
-A: The source entry in sentinel-eval carried `cross_ref: observability`
+A: The source entry in arbiter-l8 carried `cross_ref: observability`
 in its frontmatter from the day it was written, marking it for mirroring
 — but the mirror was never actually created. The gap went unnoticed until
 a punch-list review of a stale local `skills/journal-anki.md` copy in

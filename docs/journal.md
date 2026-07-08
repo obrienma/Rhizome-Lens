@@ -427,25 +427,25 @@ than removing and re-adding them later. Mirrors the existing RabbitMQ
 
 ---
 
-## Phase 0 (cont.) — sentinel-eval joins the traced services (via cross-repo mirror) — 2026-07-03
-Files: sentinel-eval/src/sentinel_eval/observability/, sentinel-eval/src/sentinel_eval/online/pipeline.py, sentinel-eval/src/sentinel_eval/online/judge.py
+## Phase 0 (cont.) — arbiter-l8 joins the traced services (via cross-repo mirror) — 2026-07-03
+Files: arbiter-l8/src/arbiter_l8/observability/, arbiter-l8/src/arbiter_l8/online/pipeline.py, arbiter-l8/src/arbiter_l8/online/judge.py
 
-Mirrored from `sentinel-eval/docs/journal/sentinel-eval-2026-07-03T1916-otel-instrumentation.md`
-(`cross_ref_id: sentinel-eval-2026-07-03T1916-otel-instrumentation`) — that
+Mirrored from `arbiter-l8/docs/journal/arbiter-l8-2026-07-03T1916-otel-instrumentation.md`
+(`cross_ref_id: arbiter-l8-2026-07-03T1916-otel-instrumentation`) — that
 repo uses the newer per-entry `docs/journal/` directory format; this hub
 keeps its own flat-file convention per this repo's local
 `skills/journal-anki.md` copy, so the framing below is hub-shaped rather
 than a verbatim copy.
 
-sentinel-eval (the standalone eval harness scoring Sentinel-L7 and
+arbiter-l8 (the standalone eval harness scoring Sentinel-L7 and
 Synapse-L4 outputs) is now the fifth OTel-instrumented service in the
 suite, following the same OTLP/HTTP-to-Collector convention as the other
 four: `OTEL_EXPORTER_OTLP_ENDPOINT` (default `http://localhost:4318`) with
 `/v1/traces` and `/v1/metrics` suffixes, `OTEL_SERVICE_NAME` defaulting to
-`sentinel-eval`.
+`arbiter-l8`.
 
 ### Anti-Pattern Avoided: Deferred SDK Initialization (Root-Span Fragmentation)
-Before wiring sentinel-eval's tracer, checked whether Synapse-L4's suspected
+Before wiring arbiter-l8's tracer, checked whether Synapse-L4's suspected
 "three traces instead of one" bug is a general Python-SDK-init-order
 problem rather than a FastAPI-only quirk — relevant to this hub because any
 future Python service in the suite would be at risk of the same bug.
@@ -461,34 +461,34 @@ latched in, producing inconsistent root-span parenting. Same discipline
 already documented for EventHorizon's Node SDK ("must come before any
 instrumented module is imported") — generalizes across languages, not
 Python-specific either, just easier to hit in a deferred-lifecycle-hook
-framework pattern. sentinel-eval's `observability/tracing.py` /
+framework pattern. arbiter-l8's `observability/tracing.py` /
 `metrics.py` configure their providers as a plain import-time module-level
 side effect instead of behind a lifecycle hook, avoiding the same trap.
 **Not yet applied back to synapse-l4 itself** — flagged as a candidate fix
-for that repo, not made in this session (out of scope for the sentinel-eval
+for that repo, not made in this session (out of scope for the arbiter-l8
 task that produced this finding).
 
 ### Challenge: No live verification against this hub's own Collector
-Unlike the other services' entries above, sentinel-eval's OTLP wiring was
+Unlike the other services' entries above, arbiter-l8's OTLP wiring was
 **not** verified against a running Collector in the session that produced
 it — Docker wasn't reachable from that WSL session. The instrumentation
 logic itself (span names, parent/child nesting, exception status, counter
 emission across the judge fallback chain) was verified with in-memory
-span/metric exporters in sentinel-eval's own test suite, which is a
+span/metric exporters in arbiter-l8's own test suite, which is a
 weaker claim than "trace confirmed visible in Tempo" for the other four
 services. Per this repo's own "verify a status claim against the artifact"
-pattern (above): treat sentinel-eval as *instrumented, not yet confirmed
+pattern (above): treat arbiter-l8 as *instrumented, not yet confirmed
 flowing* until someone runs the stack and checks Tempo/Prometheus for real.
 
 ---
 
 ## Phase 0 (cont.) — Sentinel-L7 MCP adapter: a reverse-engineered integration boundary — 2026-07-04
 cross-ref: observability
-cross_ref_id: sentinel-eval-2026-07-04T0819-sentinel-l7-adapter
-Files: sentinel-eval/src/sentinel_eval/adapters/sentinel_l7.py, sentinel-eval/tests/test_sentinel_l7_adapter.py, sentinel-eval/README.md
+cross_ref_id: arbiter-l8-2026-07-04T0819-sentinel-l7-adapter
+Files: arbiter-l8/src/arbiter_l8/adapters/sentinel_l7.py, arbiter-l8/tests/test_sentinel_l7_adapter.py, arbiter-l8/README.md
 
-Mirrored from `sentinel-eval/docs/journal/sentinel-eval-2026-07-04T0819-sentinel-l7-adapter.md`
-(`cross_ref_id: sentinel-eval-2026-07-04T0819-sentinel-l7-adapter`) — that
+Mirrored from `arbiter-l8/docs/journal/arbiter-l8-2026-07-04T0819-sentinel-l7-adapter.md`
+(`cross_ref_id: arbiter-l8-2026-07-04T0819-sentinel-l7-adapter`) — that
 repo uses the newer per-entry `docs/journal/` directory format; this hub
 keeps its own flat-file convention, so the framing below is hub-shaped
 rather than a verbatim copy. **Backfilled 2026-07-06**: this entry carried
@@ -500,7 +500,7 @@ looking for exactly this kind of drift).
 
 Sentinel-L7 exposes no plain HTTP route for its compliance-analysis
 integration boundary — only an MCP server (`Mcp::web('/mcp',
-SentinelServer::class)`). Building sentinel-eval's adapter for it required
+SentinelServer::class)`). Building arbiter-l8's adapter for it required
 reading `vendor/laravel/mcp` source directly rather than assuming the MCP
 spec in general, since Laravel's specific implementation choices aren't
 guaranteed by the spec itself.
@@ -528,5 +528,5 @@ all but a collapsed boolean before it reached this integration point.
 Widened the boundary's own output (additive-only — new keys, existing
 four untouched, backward-compatible with an already-warm production
 cache via `??` fallbacks) rather than accepting a permanent measurement
-ceiling on the sentinel-eval side of the integration. Full Sentinel-L7
+ceiling on the arbiter-l8 side of the integration. Full Sentinel-L7
 suite (312 tests) green before and after.
