@@ -2,7 +2,7 @@
 
 A self-contained, local-runnable **observability backend** built on [OpenTelemetry](https://opentelemetry.io/) and the Grafana "pillar" stack: an OTel Collector that ingests traces, logs, and metrics over OTLP and fans them out to **Tempo** (traces), **Loki** (logs), and **Prometheus** (metrics), all visualized in **Grafana**. A single `docker compose up` brings up the whole stack — no cloud account, no managed service.
 
-It's the shared telemetry backend for a four-service, four-language migration to OpenTelemetry (TypeScript, Python, PHP, and Ruby). The headline goal is **distributed tracing that follows a single request across both service boundaries and async boundaries** — Redis Streams and RabbitMQ — so you can see one trace span four codebases. This repo is infrastructure only; the services that emit to it live in their own repositories (see the [roadmap](#-status--roadmap)).
+It's the shared telemetry backend for a four-service, four-language migration to OpenTelemetry (TypeScript, Python, PHP, and Ruby). The headline goal is **distributed tracing that follows a single request across both service boundaries and async boundaries** — Redis Streams and RabbitMQ — so you can see one trace span four codebases. This repo is infrastructure only; the services that emit to it live in their own repositories (see the [roadmap](#-status--roadmap)). A fifth, auxiliary consumer — `arbiter-l8` (a standalone Python eval harness, outside the core migration's scope) — also targets this Collector; see its row in the status table below.
 
 ```
 [synapse-l4  (Python/FastAPI)]  ─────┐
@@ -51,6 +51,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · — n/a
 | 3 | EventHorizon | `EventHorizon` (TypeScript/Fastify) | ✅ done | ✅ EventHorizon Service | ⬜ planned |
 | 4 | Ledger-L5 (Ruby invoicer) | `Ledger-L5` (Ruby/Rails) | ⬜ not started | ⬜ none yet | ⬜ planned |
 | 5 | Logs & dashboards polish | all | — | 🟡 early slices | ⬜ planned |
+| — | arbiter-l8 (eval harness, auxiliary — outside core migration scope) | `arbiter-l8` (Python) | 🟡 coded, unconfirmed | ⬜ none yet | ⬜ planned |
 
 > **Sequencing note:** the plan orders the per-service instrumentation Synapse → Sentinel → EventHorizon → invoicer (Synapse first because Logfire is already OTel; Sentinel next to prove the first cross-service link; EventHorizon was done out of order as the independent pipeline). **Instrumentation for Phases 1–3 is complete** — the headline Synapse → Sentinel cross-service trace and EventHorizon's four-stage trace are both live in Tempo. The remaining work is **Phase 4 (Ledger-L5 invoicer)** and **Phase 5 dashboards** — only Phase 0 and EventHorizon have a dedicated dashboard so far; Synapse and Sentinel emit signals but have no dashboard yet. See [`docs/OBSERVABILITY_MIGRATION_PLAN.md`](docs/OBSERVABILITY_MIGRATION_PLAN.md) for the full rationale and pause checkpoints.
 
@@ -99,6 +100,12 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · — n/a
 - [ ] Confirm outbound HTTP to Sentinel auto-injects `traceparent` and links across services
 - [ ] Manual wide spans on `invoice.generate` / `invoice.send` / `invoice.mark_paid` (`customer_id`, `amount_cents`, `billing.plan`, …)
 - [ ] Commit `.observability/phase-4-complete`
+
+### arbiter-l8 — auxiliary consumer (eval harness, outside core scope) 🟡 coded, unconfirmed
+
+- [x] OTel SDK + OTLP exporter wired as a plain import-time side effect (mirrors EventHorizon's Node SDK init-order pattern — instrumentation set up before any instrumented object is constructed, not deferred behind a lifecycle hook)
+- [x] Verified against in-memory span/metric exporters in arbiter-l8's own test suite
+- [ ] **Not yet confirmed against this repo's live Collector.** Docker wasn't reachable in the session that built it, so — unlike the four services above — there's no observed trace in Tempo for `arbiter-l8` yet. Recorded as "instrumented, not yet confirmed flowing" rather than "done," per this repo's own "verify a status claim against the artifact" convention. See `docs/journal.md` (Phase 0 cont. — arbiter-l8 joins the traced services) and `docs/probes/phase-0-arbiter-l8-otel-instrumentation.md`.
 
 ### Logs & dashboards polish (Phase 5) — all 🟡
 
