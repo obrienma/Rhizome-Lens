@@ -45,7 +45,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · — n/a
 
 | Phase | Component | Repo | Instrumentation | Dashboard | Logs → Loki |
 |---|---|---|---|---|---|
-| 0 | Observability backend (Collector + Tempo + Loki + Prometheus + Grafana) | `rhizome-observability` (this repo) | ✅ done | ✅ OTel Overview | ✅ sink ready |
+| 0 | Observability backend (Collector + Tempo + Loki + Prometheus + Grafana) | `rhizome-lens` (this repo) | ✅ done | ✅ OTel Overview | ✅ sink ready |
 | 1 | Synapse-L4 | `synapse-l4` (Python/FastAPI) | ✅ done | ⬜ none yet | ⬜ planned |
 | 2 | Sentinel-L7 | `sentinel-l7` (Laravel/PHP) | ✅ done | ⬜ none yet | ⬜ planned |
 | 3 | EventHorizon | `EventHorizon` (TypeScript/Fastify) | ✅ done | ✅ EventHorizon Service | ⬜ planned |

@@ -2,7 +2,7 @@
 """
 probe_to_anki.py — Import probe files into Anki via AnkiConnect.
 
-Run from rhizome-observability repo root to sync all repos:
+Run from rhizome-lens repo root to sync all repos:
     python3 scripts/probe_to_anki.py
 
 Or target a specific repo or file:
@@ -34,7 +34,7 @@ REPOS = [
     "ledger-l5",
 ]
 
-# Script lives in rhizome-observability/scripts/ — parent is the repo root,
+# Script lives in rhizome-lens/scripts/ — parent is the repo root,
 # sibling repos are one level up from there.
 SCRIPT_DIR = Path(__file__).resolve().parent
 OBSERVABILITY_ROOT = SCRIPT_DIR.parent

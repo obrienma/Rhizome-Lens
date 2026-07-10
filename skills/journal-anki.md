@@ -55,7 +55,7 @@ Cross-cutting entries that touch an integration boundary (Synapse→Sentinel,
 EventHorizon→RabbitMQ, etc.), written in a repo using the per-file
 `docs/journal/` convention, carry `cross_ref: observability` plus a
 `cross_ref_id` in their frontmatter and are mirrored here, to
-`rhizome-observability/docs/journal.md`.
+`rhizome-lens/docs/journal.md`.
 
 The mirrored entry in this repo carries the *same* `cross_ref_id` value
 (as a header line — see "Entry header" below, since this repo doesn't use
@@ -381,4 +381,4 @@ before finalising.
 | EventHorizon | `Rhizome::EventHorizon` |
 | synapse-l4 | `Rhizome::synapse-l4` |
 | Ledger-L5 | `Rhizome::ledger-l5` |
-| (cross-cutting) | `Rhizome::observability` |
+| rhizome-lens | `Rhizome::rhizome-lens` |

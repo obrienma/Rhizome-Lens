@@ -338,7 +338,7 @@ A: "Done" meant the *instrumentation* Definition of Done (cross-service trace li
 
 **Blind-copying the master plan and reintroducing a resolved item**
 Q: EventHorizon holds the most-updated plan (a strict superset with as-built notes for Phases 0–3). Why not just `cp` it over this repo's copy and stop?
-A: Because the master copy described a "Cross-repo open item (belongs in rhizome-observability): the Prometheus scrape job for `rabbitmq_prometheus` is the one remaining step" — which *this* repo had already shipped (the `rabbitmq` job is in `prometheus.yml`, host-gateway, `/metrics/per-object`). A blind copy would have re-opened a closed item. Reconciliation ≠ overwrite: adopt the superset, then patch the spots where the destination repo has moved past the source's knowledge. Diffed the two copies first (`diff`) to see exactly which regions differed before deciding what to keep.
+A: Because the master copy described a "Cross-repo open item (belongs in rhizome-lens): the Prometheus scrape job for `rabbitmq_prometheus` is the one remaining step" — which *this* repo had already shipped (the `rabbitmq` job is in `prometheus.yml`, host-gateway, `/metrics/per-object`). A blind copy would have re-opened a closed item. Reconciliation ≠ overwrite: adopt the superset, then patch the spots where the destination repo has moved past the source's knowledge. Diffed the two copies first (`diff`) to see exactly which regions differed before deciding what to keep.
 
 ### Challenges
 

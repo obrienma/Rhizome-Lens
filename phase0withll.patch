@@ -43,7 +43,7 @@ index 0000000..c2c524f
 @@ -0,0 +1,72 @@
 +# Observability Migration Plan
 +
-+Four-service migration to OpenTelemetry, using `rhizome-observability` as the shared backend.
++Four-service migration to OpenTelemetry, using `rhizome-lens` as the shared backend.
 +
 +---
 +
@@ -118,7 +118,7 @@ index 8a42ac7..23647bf 100644
 --- a/README.md
 +++ b/README.md
 @@ -1 +1,83 @@
- # rhizome-observability
+ # rhizome-lens
 +
 +Shared OTel backend for the four-service observability migration. Provides a single `docker compose up` that brings up the full collection, storage, and visualization stack.
 +

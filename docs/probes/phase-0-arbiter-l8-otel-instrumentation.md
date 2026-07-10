@@ -1,6 +1,6 @@
 ---
 type: cloze
-deck: Rhizome::observability
+deck: Rhizome::rhizome-lens
 tags: [observability, arbiter-l8, root-span-fragmentation]
 ---
 Synapse-L4's suspected trace-fragmentation bug traces to calling
@@ -14,7 +14,7 @@ See: docs/journal.md (Phase 0 cont. — arbiter-l8 joins the traced services)
 
 ---
 type: basic
-deck: Rhizome::observability
+deck: Rhizome::rhizome-lens
 tags: [observability, arbiter-l8]
 ---
 Q: Why is arbiter-l8's OTel status recorded as "instrumented, not yet

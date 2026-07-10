@@ -1,6 +1,6 @@
 ---
 type: cloze
-deck: Rhizome::observability
+deck: Rhizome::rhizome-lens
 tags: [observability, arbiter-l8, mcp-jsonrpc]
 ---
 Laravel MCP tool names are derived via {{c1::Str::kebab}}(class_basename($this))
@@ -13,7 +13,7 @@ See: docs/journal.md (Phase 0 cont. — Sentinel-L7 MCP adapter)
 
 ---
 type: cloze
-deck: Rhizome::observability
+deck: Rhizome::rhizome-lens
 tags: [observability, arbiter-l8, mcp-jsonrpc]
 ---
 A Laravel MCP tool's JSON-RPC result content is `Response::json($result)`,
@@ -26,7 +26,7 @@ See: docs/journal.md (Phase 0 cont. — Sentinel-L7 MCP adapter)
 
 ---
 type: basic
-deck: Rhizome::observability
+deck: Rhizome::rhizome-lens
 tags: [observability, arbiter-l8]
 ---
 Q: Why was this mirror entry backfilled on 2026-07-06 instead of when it

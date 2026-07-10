@@ -1,4 +1,4 @@
-# Engineering Journal — rhizome-observability
+# Engineering Journal — rhizome-lens
 
 Per-repo engineering journal (typed, vocabulary-enforced). Paired Anki probes
 live in `docs/probes/`. Migrated from `LEARNING_LOG.md` on 2026-06-16.
@@ -412,7 +412,7 @@ goes stale without erroring. Re-read the prose within a screen of any flipped
 status.
 
 ### Decision: This repo's plan is canonical; sync up from services manually
-The user designated `rhizome-observability/docs/OBSERVABILITY_MIGRATION_PLAN.md`
+The user designated `rhizome-lens/docs/OBSERVABILITY_MIGRATION_PLAN.md`
 as canonical (2026-06-16). Service repos keep copies that may lag; changes are
 synced *up* into the canonical copy manually as work happens, and services pull
 the plan *from* here. Reverses the earlier treatment of EventHorizon's copy as

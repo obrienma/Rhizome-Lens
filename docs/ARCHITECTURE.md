@@ -2,7 +2,7 @@
 
 ## Overview
 
-`rhizome-observability` is the shared observability backend for a four-service OTel migration. It runs as a standalone Docker Compose stack that any instrumented service ships signals to over OTLP. It is infrastructure only — no application code.
+`rhizome-lens` is the shared observability backend for a four-service OTel migration. It runs as a standalone Docker Compose stack that any instrumented service ships signals to over OTLP. It is infrastructure only — no application code.
 
 ---
 
