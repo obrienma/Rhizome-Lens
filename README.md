@@ -2,7 +2,7 @@
 
 A self-contained, local-runnable **observability backend** built on [OpenTelemetry](https://opentelemetry.io/) and the Grafana "pillar" stack: an OTel Collector that ingests traces, logs, and metrics over OTLP and fans them out to **Tempo** (traces), **Loki** (logs), and **Prometheus** (metrics), all visualized in **Grafana**. A single `docker compose up` brings up the whole stack — no cloud account, no managed service.
 
-It's the shared telemetry backend for a four-service, four-language migration to OpenTelemetry (TypeScript, Python, PHP, and Ruby). The headline goal is **distributed tracing that follows a single request across both service boundaries and async boundaries** — Redis Streams and RabbitMQ — so you can see one trace span four codebases. This repo is infrastructure only; the services that emit to it live in their own repositories (see the [roadmap](#-status--roadmap)). A fifth, auxiliary consumer — `arbiter-l8` (a standalone Python eval harness, outside the core migration's scope) — also targets this Collector; see its row in the status table below.
+It's the shared telemetry backend for a four-service, three-language migration to OpenTelemetry (Python, TypeScript, PHP). The headline goal is **distributed tracing that follows a single request across both service boundaries and async boundaries** — Redis Streams and RabbitMQ — so you can see one trace span four codebases. This repo is infrastructure only; the services that emit to it live in their own repositories (see the [roadmap](#-status--roadmap)). A fifth, auxiliary consumer — `arbiter-l8` (a standalone Python eval harness, outside the core migration's scope) — also targets this Collector; see its row in the status table below.
 
 ```
 [synapse-l4  (Python/FastAPI)]  ─────┐
@@ -49,7 +49,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · — n/a
 | 1 | Synapse-L4 | `synapse-l4` (Python/FastAPI) | ✅ done | ⬜ none yet | ⬜ planned |
 | 2 | Sentinel-L7 | `sentinel-l7` (Laravel/PHP) | ✅ done | ⬜ none yet | ⬜ planned |
 | 3 | EventHorizon | `EventHorizon` (TypeScript/Fastify) | ✅ done | ✅ EventHorizon Service | ⬜ planned |
-| 4 | Ledger-L5 (Ruby invoicer) | `Ledger-L5` (Ruby/Rails) | ⬜ not started | ⬜ none yet | ⬜ planned |
+| 4 | Ledger-L5 | `Ledger-L5` (Python/FastAPI) | ⬜ not started | ⬜ none yet | ⬜ planned |
 | 5 | Logs & dashboards polish | all | — | 🟡 early slices | ⬜ planned |
 | — | arbiter-l8 (eval harness, auxiliary — outside core migration scope) | `arbiter-l8` (Python) | 🟡 coded, unconfirmed | ⬜ none yet | ⬜ planned |
 
@@ -94,7 +94,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · — n/a
 - [x] `.observability/phase-3-complete` committed
 - [ ] Structured logs via OTLP/pino — `console.*` retained for now (deferred to Phase 5)
 
-### Ledger-L5 — Ruby invoicer (Phase 4) — `Ledger-L5` ⬜
+### Ledger-L5 — Invoicing (Phase 4) — `Ledger-L5` ⬜
 
 - [ ] Instrument from day one (`opentelemetry-sdk` + OTLP exporter + `use_all`)
 - [ ] Confirm outbound HTTP to Sentinel auto-injects `traceparent` and links across services
