@@ -1,4 +1,4 @@
-# 🚧 Rhizome Observability
+# 📊 Rhizome Lens
 
 A self-contained, local-runnable **observability backend** built on [OpenTelemetry](https://opentelemetry.io/) and the Grafana "pillar" stack: an OTel Collector that ingests traces, logs, and metrics over OTLP and fans them out to **Tempo** (traces), **Loki** (logs), and **Prometheus** (metrics), all visualized in **Grafana**. A single `docker compose up` brings up the whole stack — no cloud account, no managed service.
 
@@ -8,7 +8,7 @@ It's the shared telemetry backend for a four-service, four-language migration to
 [synapse-l4  (Python/FastAPI)]  ─────┐
 [sentinel-l7 (Laravel/PHP)   ]  ─────┤  OTLP/gRPC :4317
 [EventHorizon (TS/Fastify)   ]  ─────┤  OTLP/HTTP :4318
-[Ledger-L5   (Ruby/Rails)    ]  ─────┘
+[Ledger-L5   (Python/FastAPI)]  ─────┘
                                     │
                            ┌────────▼──────────┐
                            │  otel-collector   │
@@ -101,7 +101,7 @@ Legend: ✅ done · 🟡 in progress · ⬜ not started · — n/a
 - [ ] Manual wide spans on `invoice.generate` / `invoice.send` / `invoice.mark_paid` (`customer_id`, `amount_cents`, `billing.plan`, …)
 - [ ] Commit `.observability/phase-4-complete`
 
-### arbiter-l8 — auxiliary consumer (eval harness, outside core scope) 🟡 coded, unconfirmed
+### Arbiter-L8 — auxiliary consumer (eval harness, outside core scope) 🟡 coded, unconfirmed
 
 - [x] OTel SDK + OTLP exporter wired as a plain import-time side effect (mirrors EventHorizon's Node SDK init-order pattern — instrumentation set up before any instrumented object is constructed, not deferred behind a lifecycle hook)
 - [x] Verified against in-memory span/metric exporters in arbiter-l8's own test suite
