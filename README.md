@@ -1,4 +1,6 @@
-# 📊 Rhizome Lens
+<p align="center">
+  <img width="200" alt="Rhizome Lens" src="docs/assets/Rhizome-Lens-logo.png" />
+</p>
 
 A self-contained, local-runnable **observability backend** built on [OpenTelemetry](https://opentelemetry.io/) and the Grafana "pillar" stack: an OTel Collector that ingests traces, logs, and metrics over OTLP and fans them out to **Tempo** (traces), **Loki** (logs), and **Prometheus** (metrics), all visualized in **Grafana**. A single `docker compose up` brings up the whole stack — no cloud account, no managed service.
 
