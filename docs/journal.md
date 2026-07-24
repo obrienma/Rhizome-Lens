@@ -530,3 +530,58 @@ four untouched, backward-compatible with an already-warm production
 cache via `??` fallbacks) rather than accepting a permanent measurement
 ceiling on the arbiter-l8 side of the integration. Full Sentinel-L7
 suite (312 tests) green before and after.
+
+---
+
+## Phase 0 (cont.) — arbiter-l8 confirmed flowing against a live Collector; Arbiter-L8 Service dashboard — 2026-07-23
+Files: grafana/provisioning/dashboards/arbiter-l8-service.json, README.md
+
+### Pattern: Verify a Status Claim Against the Artifact
+Continuing this repo's own established discipline (see the Sentinel-L7 and
+EventHorizon dashboard entries above): `arbiter-l8`'s OTel wiring had been
+recorded as "instrumented, not yet confirmed flowing" since Docker wasn't
+reachable in the session that built it. With the stack up
+(`docker compose up -d`), that claim was checked directly rather than
+upgraded on faith — queried Tempo's `/api/search` for
+`resource.service.name="arbiter-l8"` and Prometheus's
+`/api/v1/query` for `arbiter_l8_judge_outcome_total` /
+`arbiter_l8_layer_latency_milliseconds_bucket` after generating real
+traffic. Both returned populated series, so the status graduates from
+🟡 to ✅ — a claim now backed by an observed artifact, not just code review.
+
+### Decision: Drive the Real `evaluate_item` Pipeline, Not Synthetic Spans
+`arbiter-l8`'s CLI (`arbiter_l8.cli:main`) only wires the offline
+`run_eval()` harness — `online.pipeline.evaluate_item` has no CLI surface
+by design, since it's meant to be called from a caller's own sampling
+loop, not run standalone (per `docs/adr/0001-standalone-module.md`). Rather
+than writing a throwaway script that emits spans directly via
+`tracer.start_as_current_span(...)`, which would only prove the OTLP
+transport works, a small driver script constructed real `EvalPrediction`
+objects and called `evaluate_item(..., judge=JudgeCircuitBreaker())`
+against the live stack — exercising the actual `heuristics_check` →
+`judge_call` → (`ollama_attempt` / `flash_attempt` / `heuristics_fallback`)
+fallback chain. This is a stronger verification: it confirmed both wire
+delivery and that the instrumented code paths themselves fire as designed
+(the run produced a genuine mix of `ollama` successes and
+`heuristics_fallback` outcomes, not a fabricated single value).
+
+### Decision: New Arbiter-L8 Service Dashboard, Not an Overview Addition
+Followed the existing per-service dashboard convention (`sentinel-l7-
+service.json`, `eventhorizon-service.json`) rather than folding panels into
+the shared `overview.json`: a `arbiter-l8-service.json` with three
+Prometheus panels (judge outcome rate by source, `%` scored by judge vs.
+fallback, per-layer p95 latency from `arbiter_l8.layer.latency`) and two
+Tempo TraceQL panels plus two Tempo tables (evaluation throughput/latency,
+judge-chain exception events, recent evaluations) — mixing datasources
+within one dashboard mirrors EventHorizon's own panel layout. Grafana's
+file-provisioning watcher (`updateIntervalSeconds: 30` in
+`grafana/provisioning/dashboards/dashboards.yaml`) picked it up with no
+container restart needed.
+
+### Challenge: No CLI Surface Meant Writing a One-Off Driver Script
+`evaluate_item` isn't reachable from `arbiter-l8`'s own console script, so
+confirming delivery required importing it directly against the repo's
+`.venv` from an ad hoc script (kept outside both repos, in the session
+scratchpad) rather than a documented, reusable command. Acceptable for a
+one-time verification; a proper "smoke-test the online pipeline against a
+live Collector" entrypoint is not something either repo currently exposes.
